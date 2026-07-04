@@ -100,6 +100,7 @@ const memberName = id => (S.members.find(m => m.id === id) || {}).name || '(remo
 const projectName = id => (S.projects.find(p => p.id === id) || {}).name || '(removed)';
 const wsName = id => (S.workspaces.find(w => w.id === id) || {}).name || '—';
 const byName = (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }); // alphabetical, by project/member name
+const fmtDT = iso => new Date(iso).toLocaleString('en-US', { timeZone: (S.settings && S.settings.timezone) || 'Asia/Manila', month: 'long', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
 
 // ---------------- dates: display as "July 5, 2026", accept typed input ----------------
 const fmt = iso => { const [y, m, d] = iso.split('-').map(Number); return new Date(Date.UTC(y, m - 1, d)).toLocaleString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }); };
@@ -461,6 +462,8 @@ async function renderProjectView(main) {
         btn.disabled = false; btn.textContent = 'Send';
       } else {
         btn.textContent = 'Sent ✓'; btn.classList.add('btn-sent');
+        const ls = btn.closest('.pv-head').querySelector('.last-sent');
+        if (ls) ls.textContent = 'Last sent: ' + fmtDT(new Date().toISOString());
         toast('Posted to Slack ✓');
       }
     } catch (err) { toast(err.message, true); btn.disabled = false; btn.textContent = 'Send'; }
@@ -488,6 +491,7 @@ function projectBlock(x, chans, email) {
         <span class="hash">#${esc(m.channel.name)}</span>
         <span class="muted small">${m.channel.webhook_url ? 'via webhook' : esc(m.workspace || 'workspace not set')}</span>
         <span class="spacer"></span>
+        <span class="muted small last-sent">${m.channel.last_sent_at ? 'Last sent: ' + fmtDT(m.channel.last_sent_at) : 'Never sent yet'}</span>
         <button class="btn-primary ch-send" data-pid="${p.id}" data-chid="${m.channel.id}">Send</button>
       </div>
       <div class="slack-msg"><div class="slack-msg-body"><div class="slack-avatar">OD</div>
