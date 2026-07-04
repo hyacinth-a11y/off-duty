@@ -1,5 +1,5 @@
 // Notification window logic, template rendering, and Slack delivery.
-const { load } = require('./db');
+const { load, save } = require('./db');
 
 // ---------- date helpers (all in the configured timezone) ----------
 function partsInTz(date, tz) {
@@ -115,19 +115,59 @@ async function slackApi(token, method, payload) {
   return res.json();
 }
 
+const looksLikeId = v => /^[CGD][A-Z0-9]{6,}$/i.test(v.replace(/^#/, ''));
+
+// Turn raw Slack errors into instructions a person can act on.
+function friendlyError(err, channelName) {
+  const map = {
+    not_in_channel: `the bot isn't in #${channelName} yet — open that channel in Slack and type /invite @YourBotName`,
+    channel_not_found: `Slack can't find "${channelName}" — check the spelling; if it's a private channel, invite the bot first and use the channel ID (Slack: channel name → ⋯ → Copy channel ID) instead of the name`,
+    ratelimited: 'Slack is rate-limiting requests — wait about a minute, then press Send again',
+    invalid_auth: 'the bot token looks invalid — re-copy it from api.slack.com and update it in Settings',
+    token_revoked: 'the bot token was revoked — reinstall the Slack app and paste the new token in Settings',
+    account_inactive: 'the Slack app was uninstalled — reinstall it and update the token in Settings',
+    is_archived: `#${channelName} is archived in Slack`,
+    msg_too_long: 'the message is too long for Slack — shorten the template',
+  };
+  return map[err] || err;
+}
+
+// Rarely needed fallback: only used for private channels referenced by name.
+// conversations.list is heavily rate-limited by Slack, so we avoid it whenever possible.
 async function resolveChannelId(token, nameOrId) {
   const v = nameOrId.replace(/^#/, '');
-  if (/^[CGD][A-Z0-9]{6,}$/i.test(v)) return v; // already an ID
   let cursor;
   do {
     const r = await slackApi(token, 'conversations.list',
       { limit: 1000, types: 'public_channel,private_channel', cursor });
-    if (!r.ok) throw new Error(`conversations.list failed: ${r.error}`);
+    if (!r.ok) throw new Error(friendlyError(r.error, v));
     const hit = (r.channels || []).find(c => c.name === v);
     if (hit) return hit.id;
     cursor = r.response_metadata && r.response_metadata.next_cursor;
   } while (cursor);
-  throw new Error(`Channel "${nameOrId}" not found in that workspace (is the bot invited?)`);
+  throw new Error(friendlyError('channel_not_found', v));
+}
+
+// Post to one channel with as few Slack calls as possible:
+// 1) use a cached/explicit channel ID, 2) post by #name directly,
+// 3) only as a last resort look the ID up (and cache it for next time).
+async function postToChannel(token, ch, text) {
+  const name = ch.name.replace(/^#/, '');
+  let target = ch.resolved_id || (looksLikeId(name) ? name : null);
+  if (target) {
+    const r = await slackApi(token, 'chat.postMessage', { channel: target, text });
+    if (r.ok) return r;
+    if (r.error !== 'channel_not_found') throw new Error(friendlyError(r.error, name));
+    ch.resolved_id = null; save(); // cached ID went stale (channel recreated?) — retry by name below
+  }
+  let r = await slackApi(token, 'chat.postMessage', { channel: '#' + name, text });
+  if (r.ok) { if (r.channel) { ch.resolved_id = r.channel; save(); } return r; }
+  if (r.error !== 'channel_not_found') throw new Error(friendlyError(r.error, name));
+  const id = await resolveChannelId(token, name);
+  ch.resolved_id = id; save();
+  r = await slackApi(token, 'chat.postMessage', { channel: id, text });
+  if (!r.ok) throw new Error(friendlyError(r.error, name));
+  return r;
 }
 
 // Build the per-channel messages for a project (also used for previews)
@@ -162,10 +202,9 @@ async function sendProjectNotifications(projectId, now = new Date(), channelId =
       continue;
     }
     try {
-      const channelId = await resolveChannelId(m.workspace.bot_token, m.channel.name);
       const text = m.text.replaceAll('@here', '<!here>').replaceAll('@channel', '<!channel>');
-      const r = await slackApi(m.workspace.bot_token, 'chat.postMessage', { channel: channelId, text });
-      results.push({ channel: m.channel.name, workspace: m.workspace.name, ok: !!r.ok, error: r.ok ? null : r.error });
+      await postToChannel(m.workspace.bot_token, m.channel, text);
+      results.push({ channel: m.channel.name, workspace: m.workspace.name, ok: true, error: null });
     } catch (e) {
       results.push({ channel: m.channel.name, workspace: m.workspace.name, ok: false, error: e.message });
     }
