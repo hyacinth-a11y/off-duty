@@ -21,13 +21,16 @@ const pad = n => String(n).padStart(2, '0');
 const ymd = (y, m, d) => `${y}-${pad(m)}-${pad(d)}`;
 const lastDayOfMonth = (y, m) => new Date(Date.UTC(y, m, 0)).getUTCDate();
 
-// Reporting window: the current month. If today falls in the last 7 days of
-// the month, extend the window through the first 7 days of the next month.
+// Reporting window: from TODAY through the end of the current month — anything
+// that already fully passed is excluded, while ongoing time off (started earlier,
+// still running) is kept because entries are matched by overlap. If today falls in
+// the last 7 days of the month, the window extends through the first 7 days of
+// the next month.
 function reportingWindow(now = new Date()) {
   const tz = load().settings.timezone || 'Asia/Manila';
   const { y, m, d } = partsInTz(now, tz);
   const last = lastDayOfMonth(y, m);
-  const start = ymd(y, m, 1);
+  const start = ymd(y, m, d); // today — past items fall out of the window
   let end = ymd(y, m, last);
   let extended = false;
   if (d > last - 7) {
@@ -121,12 +124,20 @@ async function slackApi(token, method, payload) {
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-// Post once; if Slack says "ratelimited", wait the time it asks for (up to 45s) and retry once.
+// Post once; if Slack says "ratelimited" with a short wait, honor it and retry once.
+// If Slack demands a long wait, fail fast and tell the user exactly how long.
 async function postMessage(token, channel, text) {
   let r = await slackApi(token, 'chat.postMessage', { channel, text });
   if (!r.ok && r.error === 'ratelimited') {
-    await sleep(Math.min(r._retryAfter || 20, 45) * 1000);
-    r = await slackApi(token, 'chat.postMessage', { channel, text });
+    const wait = r._retryAfter || 20;
+    if (wait <= 45) {
+      await sleep(wait * 1000);
+      r = await slackApi(token, 'chat.postMessage', { channel, text });
+    }
+    if (!r.ok && r.error === 'ratelimited') {
+      const mins = Math.ceil((r._retryAfter || wait) / 60);
+      throw new Error(`Slack is rate-limiting the bot and asked us to wait ~${mins} minute(s). Don't press Send during that time — every attempt can extend the penalty. If this keeps happening, create a fresh Slack app and update the token in Settings.`);
+    }
   }
   return r;
 }
@@ -206,6 +217,26 @@ function buildMessages(projectId, now = new Date()) {
   return { report, messages: msgs, emailFallback };
 }
 
+// Post via an Incoming Webhook URL (tied to one channel; no token or invite needed).
+async function postWebhook(url, text) {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  });
+  const body = await res.text();
+  if (res.ok && body.trim() === 'ok') return;
+  if (res.status === 429) throw new Error('Slack asked us to slow down — wait a minute and press Send again');
+  const map = {
+    no_service: 'this webhook was deleted in Slack — create a new webhook and paste the new URL into the project',
+    no_team: 'this webhook belongs to a deleted workspace',
+    channel_not_found: 'the channel behind this webhook no longer exists — create a new webhook',
+    channel_is_archived: 'the channel behind this webhook is archived in Slack',
+    invalid_payload: 'message formatting problem — check the template for unusual characters',
+  };
+  throw new Error(map[body.trim()] || `webhook error: ${body.trim() || res.status}`);
+}
+
 async function sendProjectNotifications(projectId, now = new Date(), channelId = null) {
   const built = buildMessages(projectId, now);
   if (!built) return { ok: false, error: 'Project not found' };
@@ -216,12 +247,22 @@ async function sendProjectNotifications(projectId, now = new Date(), channelId =
   for (const m of targets) {
     if (!first) await sleep(1200); // pace multi-channel sends so Slack never sees a burst
     first = false;
+    const text = m.text.replaceAll('@here', '<!here>').replaceAll('@channel', '<!channel>');
+    // Webhook channels: simplest and most reliable path — use it whenever present
+    if (m.channel.webhook_url) {
+      try {
+        await postWebhook(m.channel.webhook_url, text);
+        results.push({ channel: m.channel.name, via: 'webhook', ok: true, error: null });
+      } catch (e) {
+        results.push({ channel: m.channel.name, via: 'webhook', ok: false, error: e.message });
+      }
+      continue;
+    }
     if (!m.workspace || !m.workspace.bot_token) {
-      results.push({ channel: m.channel.name, ok: false, error: 'No workspace / bot token configured for this channel' });
+      results.push({ channel: m.channel.name, ok: false, error: 'No webhook URL and no workspace bot token configured for this channel' });
       continue;
     }
     try {
-      const text = m.text.replaceAll('@here', '<!here>').replaceAll('@channel', '<!channel>');
       await postToChannel(m.workspace.bot_token, m.channel, text);
       results.push({ channel: m.channel.name, workspace: m.workspace.name, ok: true, error: null });
     } catch (e) {
