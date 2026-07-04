@@ -99,6 +99,7 @@ $('#modal').addEventListener('click', e => { if (e.target === $('#modal')) close
 const memberName = id => (S.members.find(m => m.id === id) || {}).name || '(removed)';
 const projectName = id => (S.projects.find(p => p.id === id) || {}).name || '(removed)';
 const wsName = id => (S.workspaces.find(w => w.id === id) || {}).name || '—';
+const byName = (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }); // alphabetical, by project/member name
 
 // ---------------- dates: display as "July 5, 2026", accept typed input ----------------
 const fmt = iso => { const [y, m, d] = iso.split('-').map(Number); return new Date(Date.UTC(y, m - 1, d)).toLocaleString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }); };
@@ -160,7 +161,7 @@ function renderProjects(main) {
       ${S.projects.length ? `<table><thead><tr>
         <th>Project</th><th>Jira</th><th>Slack channels (channel · org space · label)</th><th>Contacts</th><th></th>
       </tr></thead><tbody>
-      ${S.projects.map(p => `<tr>
+      ${[...S.projects].sort(byName).map(p => `<tr>
         <td><strong>${esc(p.name)}</strong></td>
         <td class="mono">${esc(p.jira_name) || '—'}</td>
         <td>${p.channels.length ? p.channels.map(c => `<div class="ch-line"><span class="hash">#${esc(c.name)}</span> <span class="muted">· ${esc(wsName(c.workspace_id))} ·</span> <span class="chip ${c.purpose}">${c.purpose}</span></div>`).join('') : ''}
@@ -368,7 +369,7 @@ function renderTimeoff(main) {
     `, body => {
       bindDateFields(body);
       const tpMs = multiSelect($('#tpSelect', body), {
-        options: S.projects.map(p => ({ id: p.id, label: p.name, sub: p.jira_name || '' })),
+        options: [...S.projects].sort(byName).map(p => ({ id: p.id, label: p.name, sub: p.jira_name || '' })),
         selected: t.project_ids || [],
         placeholder: 'Type a project name to add…',
       });
@@ -414,6 +415,7 @@ async function renderProjectView(main) {
   // Only projects with something to announce
   const active = S.projects
     .map((p, i) => ({ p, rep: reports[i], prev: previews[i] }))
+    .sort((a, b) => byName(a.p, b.p))
     .filter(x => x.rep && x.prev && (x.rep.ooo.length || x.rep.holidayGroups.length));
 
   const buildSection = purpose => {
