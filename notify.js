@@ -82,10 +82,8 @@ function projectReport(projectId, now = new Date()) {
     .filter(h => h.date >= win.start && h.date <= win.end)
     .sort((a, b) => a.date.localeCompare(b.date));
 
-  // Who observes them: the project roster if one is set, otherwise all members
-  const pool = (project.member_ids && project.member_ids.length)
-    ? project.member_ids.map(id => memberById[id]).filter(Boolean)
-    : db.members;
+  // Who observes them: only members assigned to this project (Projects section roster)
+  const pool = (project.member_ids || []).map(id => memberById[id]).filter(Boolean);
 
   const holidayGroups = holidays.map(h => ({
     ...h,
@@ -97,9 +95,20 @@ function projectReport(projectId, now = new Date()) {
 
 function renderTemplate(template, report) {
   const { project, win, ooo, holidayGroups } = report;
-  const oooList = ooo.length
-    ? ooo.map(t => `• ${t.member.name} — ${fmtRange(t.start_date, t.end_date)}`).join('\n')
-    : '• No scheduled time off :tada:';
+  // Group by member: one line for a single entry, name + indented date bullets for several
+  let oooList = '• No scheduled time off :tada:';
+  if (ooo.length) {
+    const byMember = new Map();
+    for (const t of ooo) {
+      if (!byMember.has(t.member_id)) byMember.set(t.member_id, { name: t.member.name, ranges: [] });
+      byMember.get(t.member_id).ranges.push(fmtRange(t.start_date, t.end_date));
+    }
+    oooList = [...byMember.values()].map(m =>
+      m.ranges.length === 1
+        ? `• ${m.name} — ${m.ranges[0]}`
+        : `• ${m.name}\n${m.ranges.map(r => `        ◦ ${r}`).join('\n')}`
+    ).join('\n');
+  }
   const holidayList = holidayGroups.length
     ? holidayGroups.map(g =>
         `• ${fmtDate(g.date)} — ${g.name} (${g.location}): ${g.members.map(m => m.name).join(', ')}`
