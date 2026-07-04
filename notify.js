@@ -109,20 +109,32 @@ function renderTemplate(template, report) {
         : `• ${m.name}\n${m.ranges.map(r => `        ◦ ${r}`).join('\n')}`
     ).join('\n');
   }
-  const holidayList = holidayGroups.length
-    ? holidayGroups.map(g =>
-        `• ${fmtDate(g.date)} — ${g.name} (${g.location}): ${g.members.map(m => m.name).join(', ')}`
-      ).join('\n')
-    : '• No holidays in this period';
-  const holidayDates = holidayGroups.length
-    ? fmtRange(holidayGroups[0].date, holidayGroups[holidayGroups.length - 1].date)
-    : '—';
-  return template
+
+  let out = template
     .replaceAll('{project}', project.name)
     .replaceAll('{month}', win.monthName + (win.extended ? ' (incl. first week of next month)' : ''))
-    .replaceAll('{ooo_list}', oooList)
-    .replaceAll('{holiday_list}', holidayList)
-    .replaceAll('{holiday_dates}', holidayDates);
+    .replaceAll('{ooo_list}', oooList);
+
+  if (holidayGroups.length) {
+    const holidayList = holidayGroups.map(g =>
+      `• ${fmtDate(g.date)} — ${g.name} (${g.location}): ${g.members.map(m => m.name).join(', ')}`
+    ).join('\n');
+    const holidayDates = fmtRange(holidayGroups[0].date, holidayGroups[holidayGroups.length - 1].date);
+    out = out.replaceAll('{holiday_list}', holidayList).replaceAll('{holiday_dates}', holidayDates);
+  } else {
+    // No holidays: drop the {holiday_list} line AND the heading line directly above it
+    const lines = out.split('\n');
+    const idx = lines.findIndex(l => l.includes('{holiday_list}'));
+    if (idx >= 0) {
+      let from = idx;
+      if (from > 0 && lines[from - 1].trim() !== '') from -= 1; // the heading, e.g. "Observing a holiday:"
+      lines.splice(from, idx - from + 1);
+      out = lines.join('\n');
+    }
+    out = out.replaceAll('{holiday_list}', '').replaceAll('{holiday_dates}', '—')
+      .replace(/\n{3,}/g, '\n\n'); // tidy leftover blank lines
+  }
+  return out;
 }
 
 // ---------- Slack ----------
