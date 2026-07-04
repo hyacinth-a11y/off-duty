@@ -11,6 +11,7 @@ app.use(express.json());
 // and the whole app (UI + API) requires it via HTTP Basic Auth.
 if (process.env.APP_PASSWORD) {
   app.use((req, res, next) => {
+    if (req.path === '/api/cron') return next(); // guarded by its own CRON_KEY below
     const hdr = req.headers.authorization || '';
     const [, b64] = hdr.split(' ');
     const pass = b64 ? Buffer.from(b64, 'base64').toString().split(':').slice(1).join(':') : '';
@@ -48,6 +49,19 @@ app.delete('/api/workspaces/:id', (req, res) => {
 });
 
 // ---------------- projects (Section 1) ----------------
+// Projects are the source of truth for member↔project mapping. Whenever a
+// project's roster changes, reconcile every member's time-off entries with it:
+// on the roster → their entries gain this project; off the roster → they lose it.
+function syncTimeoffsWithRoster(project) {
+  const d = db();
+  for (const t of d.timeoffs) {
+    const inRoster = (project.member_ids || []).includes(t.member_id);
+    const has = t.project_ids.includes(project.id);
+    if (inRoster && !has) t.project_ids.push(project.id);
+    else if (!inRoster && has) t.project_ids = t.project_ids.filter(id => id !== project.id);
+  }
+}
+
 app.get('/api/projects', (req, res) => ok(res, db().projects));
 app.post('/api/projects', (req, res) => {
   const b = req.body;
@@ -60,10 +74,10 @@ app.post('/api/projects', (req, res) => {
     type: b.type === 'external' ? 'external' : 'internal',
     notify_via_email: !!b.notify_via_email,
     contacts: (b.contacts || []).filter(Boolean),
-    channels: (b.channels || []).filter(c => c.name).map(c => ({ id: nextId(), name: c.name, workspace_id: c.workspace_id || null, purpose: c.purpose === 'external' ? 'external' : 'internal' })),
+    channels: (b.channels || []).filter(c => c.name || c.webhook_url).map(c => ({ id: nextId(), name: c.name || 'via-webhook', workspace_id: c.workspace_id || null, purpose: c.purpose === 'external' ? 'external' : 'internal', webhook_url: c.webhook_url || '' })),
     member_ids: b.member_ids || [],
   };
-  db().projects.push(p); save(); ok(res, { id: p.id });
+  db().projects.push(p); syncTimeoffsWithRoster(p); save(); ok(res, { id: p.id });
 });
 app.put('/api/projects/:id', (req, res) => {
   const p = db().projects.find(x => x.id === +req.params.id);
@@ -78,7 +92,8 @@ app.put('/api/projects/:id', (req, res) => {
     contacts: b.contacts ?? p.contacts,
     member_ids: b.member_ids ?? p.member_ids,
   });
-  if (b.channels) p.channels = b.channels.filter(c => c.name).map(c => ({ id: c.id || nextId(), name: c.name, workspace_id: c.workspace_id || null, purpose: c.purpose === 'external' ? 'external' : 'internal' }));
+  if (b.channels) p.channels = b.channels.filter(c => c.name || c.webhook_url).map(c => ({ id: c.id || nextId(), name: c.name || 'via-webhook', workspace_id: c.workspace_id || null, purpose: c.purpose === 'external' ? 'external' : 'internal', webhook_url: c.webhook_url || '' }));
+  syncTimeoffsWithRoster(p);
   save(); ok(res);
 });
 app.delete('/api/projects/:id', (req, res) => {
@@ -210,6 +225,20 @@ app.put('/api/schedules/:id', (req, res) => {
 });
 app.delete('/api/schedules/:id', (req, res) => {
   const d = db(); d.schedules = d.schedules.filter(x => x.id !== +req.params.id); save(); ok(res);
+});
+
+// ---------------- external cron trigger ----------------
+// An external pinger (cron-job.org, GitHub Actions, Vercel cron, ...) hits
+// GET /api/cron?key=CRON_KEY on a schedule. This wakes the app on free hosting
+// and fires any schedules that are due today and not yet sent. Safe to ping
+// repeatedly — each schedule sends at most once per day.
+app.all('/api/cron', async (req, res) => {
+  if (!process.env.CRON_KEY) return res.status(503).json({ error: 'CRON_KEY is not set on the server' });
+  if ((req.query.key || '') !== process.env.CRON_KEY) return res.status(403).json({ error: 'Wrong or missing key' });
+  try {
+    const { runDueSchedules } = require('./scheduler');
+    ok(res, await runDueSchedules(console.log));
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ---------------- settings ----------------
