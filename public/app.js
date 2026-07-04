@@ -28,6 +28,16 @@ function toast(msg, isError) {
   clearTimeout(t._h); t._h = setTimeout(() => t.hidden = true, 3200);
 }
 
+// Wrap a click handler so the button disables itself until the work finishes.
+// Prevents accidental duplicate saves on slow connections.
+function busyClick(btn, fn) {
+  btn.onclick = async () => {
+    if (btn.disabled) return;
+    btn.disabled = true; const old = btn.textContent; btn.textContent = 'Saving…';
+    try { await fn(); } finally { btn.disabled = false; btn.textContent = old; }
+  };
+}
+
 function openModal(html, onMount) {
   const m = $('#modal');
   $('#modalBody').innerHTML = html;
@@ -106,7 +116,7 @@ function projectForm(p) {
     <label class="field" style="display:flex;gap:8px;align-items:center">
       <input type="checkbox" id="pEmail" ${p.notify_via_email ? 'checked' : ''} style="width:auto">
       <span style="margin:0">No external Slack channel — mark as <strong>Email</strong> (I'll notify the client manually)</span></label>
-    <label class="field"><span>Project team members (used for the holiday list; leave empty to include the whole company)</span>
+    <label class="field"><span>Team members on this project — from the Team Members section. This is the source of truth: it auto-fills projects on time-off entries and drives the holiday list.</span>
       <div class="check-grid">${S.members.map(m => `<label><input type="checkbox" class="pm" value="${m.id}" ${p.member_ids.includes(m.id) ? 'checked' : ''}>${esc(m.name)} <span class="muted small">${esc(m.status)}</span></label>`).join('') || '<span class="muted small">No members yet — add them under Team Members.</span>'}</div></label>
     <div class="modal-actions"><button class="btn-ghost" id="mCancel">Cancel</button><button class="btn-primary" id="mSave">Save project</button></div>
   `, body => {
@@ -115,7 +125,7 @@ function projectForm(p) {
     const bindDel = () => body.querySelectorAll('.ch-del').forEach(x => x.onclick = () => x.closest('.channel-row').remove());
     bindDel();
     $('#mCancel', body).onclick = closeModal;
-    $('#mSave', body).onclick = async () => {
+    busyClick($('#mSave', body), async () => {
       const payload = {
         name: $('#pName', body).value.trim(),
         jira_name: $('#pJira', body).value.trim(),
@@ -134,7 +144,7 @@ function projectForm(p) {
         await (p.id ? api('/projects/' + p.id, 'PUT', payload) : api('/projects', 'POST', payload));
         closeModal(); await reload('Project saved');
       } catch (e) { toast(e.message, true); }
-    };
+    });
   });
 }
 
@@ -160,13 +170,13 @@ function renderMembers(main) {
     <div class="modal-actions"><button class="btn-ghost" id="mCancel">Cancel</button><button class="btn-primary" id="mSave">Save member</button></div>
   `, body => {
     $('#mCancel', body).onclick = closeModal;
-    $('#mSave', body).onclick = async () => {
+    busyClick($('#mSave', body), async () => {
       try {
         const payload = { name: $('#mName', body).value.trim(), status: $('#mStatus', body).value };
         await (m.id ? api('/members/' + m.id, 'PUT', payload) : api('/members', 'POST', payload));
         closeModal(); await reload('Member saved');
       } catch (e) { toast(e.message, true); }
-    };
+    });
   });
   $('#addMember').onclick = () => form({});
   main.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => form(S.members.find(m => m.id === +b.dataset.edit)));
@@ -210,13 +220,13 @@ function renderHolidays(main) {
     <div class="modal-actions"><button class="btn-ghost" id="mCancel">Cancel</button><button class="btn-primary" id="mSave">Save holiday</button></div>
   `, body => {
     $('#mCancel', body).onclick = closeModal;
-    $('#mSave', body).onclick = async () => {
+    busyClick($('#mSave', body), async () => {
       try {
         const payload = { name: $('#hName', body).value.trim(), date: $('#hDate', body).value, location: $('#hLoc', body).value };
         await (h.id ? api('/holidays/' + h.id, 'PUT', payload) : api('/holidays', 'POST', payload));
         closeModal(); await reload('Holiday saved');
       } catch (e) { toast(e.message, true); }
-    };
+    });
   });
   $('#addHoliday').onclick = () => form({});
   main.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => form(S.holidays.find(h => h.id === +b.dataset.edit)));
@@ -255,13 +265,21 @@ function renderTimeoff(main) {
         <label class="field"><span>To (same day is fine)</span><input type="date" id="tEnd" value="${t.end_date}"></label>
         <label class="field"><span>Status</span><select id="tStatus"><option value="pending" ${t.status === 'pending' ? 'selected' : ''}>Pending approval</option><option value="approved" ${t.status === 'approved' ? 'selected' : ''}>Approved</option></select></label>
       </div>
-      <label class="field"><span>Projects affected (pick all that apply)</span>
+      <label class="field"><span>Projects affected — auto-selected from the Projects section when you pick a member (you can still adjust)</span>
         <div class="check-grid">${S.projects.map(p => `<label><input type="checkbox" class="tp" value="${p.id}" ${t.project_ids.includes(p.id) ? 'checked' : ''}>${esc(p.name)}</label>`).join('') || '<span class="muted small">No projects yet — add them in the Projects section.</span>'}</div></label>
       <label class="field"><span>Note (optional)</span><input type="text" id="tNote" value="${esc(t.note)}"></label>
       <div class="modal-actions"><button class="btn-ghost" id="mCancel">Cancel</button><button class="btn-primary" id="mSave">Save entry</button></div>
     `, body => {
+      // When a member is chosen, tick the projects they belong to (from the Projects section rosters)
+      $('#tMember', body).onchange = e => {
+        const mid = +e.target.value;
+        body.querySelectorAll('.tp').forEach(cb => {
+          const proj = S.projects.find(p => p.id === +cb.value);
+          cb.checked = !!(proj && (proj.member_ids || []).includes(mid));
+        });
+      };
       $('#mCancel', body).onclick = closeModal;
-      $('#mSave', body).onclick = async () => {
+      busyClick($('#mSave', body), async () => {
         try {
           const payload = {
             member_id: +$('#tMember', body).value,
@@ -274,7 +292,7 @@ function renderTimeoff(main) {
           await (t.id ? api('/timeoffs/' + t.id, 'PUT', payload) : api('/timeoffs', 'POST', payload));
           closeModal(); await reload('Time-off saved');
         } catch (e) { toast(e.message, true); }
-      };
+      });
     });
   };
   $('#addTo').onclick = () => form();
@@ -361,12 +379,12 @@ async function renderProjectView(main) {
       const text = copyBtn.closest('.slack-msg').querySelector('.slack-text').textContent;
       navigator.clipboard.writeText(text).then(() => toast('Email text copied — paste it into your email'), () => toast('Copy failed — select the text manually', true));
     };
-    $('.pv-addsched', card).onclick = async () => {
+    busyClick($('.pv-addsched', card), async () => {
       try {
         await api('/schedules', 'POST', { project_id: pid, day: +$('.new-day', card).value, time: $('.new-time', card).value });
         await reload('Schedule added');
       } catch (e) { toast(e.message, true); }
-    };
+    });
     card.querySelectorAll('.sched-row').forEach(row => {
       const sid = +row.dataset.sid;
       $('.sch-en', row).onchange = async e => { await api('/schedules/' + sid, 'PUT', { enabled: e.target.checked }); toast(e.target.checked ? 'Schedule enabled' : 'Schedule paused'); };
@@ -415,23 +433,23 @@ function renderSettings(main) {
     <div class="modal-actions"><button class="btn-ghost" id="mCancel">Cancel</button><button class="btn-primary" id="mSave">Save workspace</button></div>
   `, body => {
     $('#mCancel', body).onclick = closeModal;
-    $('#mSave', body).onclick = async () => {
+    busyClick($('#mSave', body), async () => {
       try {
         const payload = { name: $('#wName', body).value.trim(), bot_token: $('#wToken', body).value.trim() };
         await (w.id ? api('/workspaces/' + w.id, 'PUT', payload) : api('/workspaces', 'POST', payload));
         closeModal(); await reload('Workspace saved');
       } catch (e) { toast(e.message, true); }
-    };
+    });
   });
   $('#addWs').onclick = () => wsForm({});
   main.querySelectorAll('[data-wedit]').forEach(b => b.onclick = () => wsForm(S.workspaces.find(w => w.id === +b.dataset.wedit)));
   main.querySelectorAll('[data-wdel]').forEach(b => b.onclick = async () => { await api('/workspaces/' + b.dataset.wdel, 'DELETE'); await reload('Deleted'); });
-  $('#saveSettings').onclick = async () => {
+  busyClick($('#saveSettings'), async () => {
     try {
       await api('/settings', 'PUT', { external_template: $('#extTpl').value, internal_template: $('#intTpl').value, timezone: $('#tzInput').value.trim() });
       await reload('Settings saved');
     } catch (e) { toast(e.message, true); }
-  };
+  });
 }
 
 /* ============================ router ============================ */
