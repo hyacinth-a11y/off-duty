@@ -195,3 +195,7 @@ dialog::backdrop { background: rgba(23, 41, 59, 0.45); }
 [data-theme="dark"] input[type=password], [data-theme="dark"] select, [data-theme="dark"] textarea,
 [data-theme="dark"] .nav-select { background: var(--input-bg); color: var(--ink); border-color: var(--line); color-scheme: dark; }
 [data-theme="dark"] .check-grid { border-color: var(--line); }
+
+/* ---------- multi-select: explicit added list ---------- */
+.ms-picked { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+.ms-count { font-size: 13px; color: var(--ink); margin-right: 2px; }

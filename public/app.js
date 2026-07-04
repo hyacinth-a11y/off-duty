@@ -6,33 +6,41 @@ const STATUSES = ['PH Employee', 'US Employee', 'Contractor'];
 
 const S = { workspaces: [], projects: [], members: [], holidays: [], timeoffs: [], schedules: [], settings: {}, win: null };
 
-// Searchable multi-select: type to filter, click to add, × on a chip to remove.
+// Searchable multi-select: type to filter, click to add. Everything added shows
+// in an explicit "Added (N)" list below the search box, each removable with ×.
 // Returns { get(), set(ids) }.
-function multiSelect(mount, { options, selected = [], placeholder = 'Type a name to search…' }) {
+function multiSelect(mount, { options, selected = [], placeholder = 'Type a name to search…', noun = 'added' }) {
   let sel = [...selected];
   mount.classList.add('ms');
-  mount.innerHTML = `<div class="ms-box"><span class="ms-chips" style="display:contents"></span><input class="ms-input" placeholder="${esc(placeholder)}"></div><div class="ms-list" hidden></div>`;
-  const chipsEl = $('.ms-chips', mount), input = $('.ms-input', mount), list = $('.ms-list', mount);
+  mount.innerHTML = `<div class="ms-box"><input class="ms-input" placeholder="${esc(placeholder)}"></div><div class="ms-list" hidden></div><div class="ms-picked"></div>`;
+  const input = $('.ms-input', mount), list = $('.ms-list', mount), picked = $('.ms-picked', mount);
   const byId = id => options.find(o => o.id === id);
   const renderChips = () => {
-    chipsEl.innerHTML = sel.map(id => { const o = byId(id); return o ? `<span class="ms-chip">${esc(o.label)}<button type="button" data-x="${id}" title="Remove">×</button></span>` : ''; }).join('');
-    chipsEl.querySelectorAll('[data-x]').forEach(b => b.onclick = e => {
-      e.stopPropagation(); sel = sel.filter(i => i !== +b.dataset.x); renderChips(); renderList();
+    picked.innerHTML = sel.length
+      ? `<strong class="ms-count">Added (${sel.length}):</strong> ` + sel.map(id => {
+          const o = byId(id);
+          return o ? `<span class="ms-chip">${esc(o.label)}<button type="button" data-x="${id}" title="Remove">×</button></span>` : '';
+        }).join('')
+      : `<span class="muted small">None ${esc(noun)} yet — type above to search and click a result to add it.</span>`;
+    picked.querySelectorAll('[data-x]').forEach(b => b.onclick = e => {
+      e.preventDefault(); e.stopPropagation();
+      sel = sel.filter(i => i !== +b.dataset.x); renderChips(); renderList();
     });
   };
   const renderList = () => {
     const q = input.value.trim().toLowerCase();
     const items = options.filter(o => !sel.includes(o.id) && (!q || (o.label + ' ' + (o.sub || '')).toLowerCase().includes(q)));
     list.innerHTML = items.length
-      ? items.map(o => `<div class="ms-item" data-id="${o.id}">${esc(o.label)}${o.sub ? ` <span class="muted small">· ${esc(o.sub)}</span>` : ''}</div>`).join('')
-      : `<div class="ms-empty">${options.length ? 'No matches' : 'Nothing to pick yet'}</div>`;
-    list.querySelectorAll('.ms-item').forEach(el => el.onclick = () => {
+      ? items.map(o => `<div class="ms-item" data-id="${o.id}">＋ ${esc(o.label)}${o.sub ? ` <span class="muted small">· ${esc(o.sub)}</span>` : ''}</div>`).join('')
+      : `<div class="ms-empty">${options.length ? 'No matches (or already added)' : 'Nothing to pick yet'}</div>`;
+    list.querySelectorAll('.ms-item').forEach(el => el.onclick = e => {
+      e.preventDefault();
       sel.push(+el.dataset.id); input.value = ''; renderChips(); renderList(); input.focus();
+      list.hidden = false;
     });
   };
   input.oninput = renderList;
   input.onfocus = () => { list.hidden = false; renderList(); };
-  $('.ms-box', mount).onclick = () => input.focus();
   document.addEventListener('click', e => { if (mount.isConnected && !mount.contains(e.target)) list.hidden = true; });
   renderChips();
   return { get: () => [...sel], set: ids => { sel = [...ids]; renderChips(); renderList(); } };
