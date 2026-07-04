@@ -218,3 +218,34 @@ dialog::backdrop { background: rgba(23, 41, 59, 0.45); }
 /* channel lines inside the Projects table */
 .ch-line { display: flex; align-items: center; gap: 6px; padding: 2px 0; white-space: nowrap; }
 .ch-line .hash { font-family: var(--font-mono); font-size: 13px; font-weight: 600; color: var(--primary-ink); }
+
+/* ---------- project view v3: collapsible groups + member cards ---------- */
+.pv-group { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: 16px; }
+.pv-group > summary {
+  cursor: pointer; list-style: none; padding: 14px 18px;
+  font-family: var(--font-display); font-size: 19px; font-weight: 700; letter-spacing: -0.01em;
+  display: flex; align-items: baseline; gap: 10px; user-select: none;
+}
+.pv-group > summary::before { content: "▸"; font-size: 14px; color: var(--primary); transition: transform 0.15s; }
+.pv-group[open] > summary::before { transform: rotate(90deg); }
+.pv-group > summary::-webkit-details-marker { display: none; }
+.pv-group-body { padding: 0 18px 14px; }
+
+.pv-project { border: 1px solid var(--line); border-radius: 10px; margin-bottom: 12px; background: var(--bg); }
+.pv-project > summary {
+  cursor: pointer; list-style: none; padding: 11px 14px; font-size: 15.5px;
+  display: flex; align-items: baseline; gap: 10px; user-select: none;
+}
+.pv-project > summary::before { content: "▸"; font-size: 12px; color: var(--ink-soft); transition: transform 0.15s; }
+.pv-project[open] > summary::before { transform: rotate(90deg); }
+.pv-project > summary::-webkit-details-marker { display: none; }
+.pv-project-body { padding: 0 14px 12px; }
+
+.tm-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; margin-bottom: 12px; }
+.tm-card { background: var(--surface); border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px; }
+.tm-card strong { display: block; margin-bottom: 2px; }
+.tm-card .tm-dates { font-size: 13px; color: var(--ink-soft); margin-bottom: 6px; }
+.tm-holiday { border-left: 3px solid var(--mango); }
+
+.pv-channel { margin-top: 10px; }
+.pv-channel .pv-head { margin-bottom: 6px; }

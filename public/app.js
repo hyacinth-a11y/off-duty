@@ -403,30 +403,42 @@ function renderTimeoff(main) {
 async function renderProjectView(main) {
   main.innerHTML = `<div class="section-head">
       <h1>Project View</h1>
-      <p>Covers ${fmt(S.win.start)} → ${fmt(S.win.end)}. Press Send on a card to post it to that Slack channel.</p>
-    </div><div id="pvCards"><div class="empty">Loading previews…</div></div>`;
+      <p>Covers ${fmt(S.win.start)} → ${fmt(S.win.end)}. Only projects with approved time-off or members observing a holiday appear here.</p>
+    </div><div id="pvCards"><div class="empty">Loading…</div></div>`;
   const wrap = $('#pvCards');
   if (!S.projects.length) { wrap.innerHTML = '<div class="card"><div class="empty">No projects yet — add one in the Projects section.</div></div>'; return; }
+
+  const reports  = await Promise.all(S.projects.map(p => api(`/projects/${p.id}/report`).catch(() => null)));
   const previews = await Promise.all(S.projects.map(p => api(`/projects/${p.id}/preview`).catch(() => null)));
 
-  const internalCards = [], externalCards = [];
-  S.projects.forEach((p, i) => {
-    const prev = previews[i];
-    if (!prev) return;
-    for (const m of prev.messages) {
-      const card = channelCard(p, m);
-      (m.channel.purpose === 'external' ? externalCards : internalCards).push(card);
-    }
-    if (prev.emailFallback) externalCards.push(emailCard(p, prev.emailFallback));
-  });
+  // Only projects with something to announce
+  const active = S.projects
+    .map((p, i) => ({ p, rep: reports[i], prev: previews[i] }))
+    .filter(x => x.rep && x.prev && (x.rep.ooo.length || x.rep.holidayGroups.length));
 
-  wrap.innerHTML = `
-    <h2 class="pv-section">Internal <span class="muted small">— your team's channels</span></h2>
-    ${internalCards.join('') || '<div class="card"><div class="empty">No internal channels configured yet — add them per project in the Projects section.</div></div>'}
-    <h2 class="pv-section">External <span class="muted small">— client-facing channels &amp; email</span></h2>
-    ${externalCards.join('') || '<div class="card"><div class="empty">No external channels or email-marked projects yet.</div></div>'}`;
+  const buildSection = purpose => {
+    const blocks = active.map(x => {
+      const chans = x.prev.messages.filter(m => m.channel.purpose === purpose);
+      const email = purpose === 'external' ? x.prev.emailFallback : null;
+      if (!chans.length && !email) return '';
+      return projectBlock(x, chans, email);
+    }).filter(Boolean);
+    return blocks.length ? blocks.join('') : `<div class="empty">No ${purpose} channels with updates this period.</div>`;
+  };
 
-  wrap.querySelectorAll('.ch-send').forEach(btn => btn.onclick = async () => {
+  wrap.innerHTML = active.length ? `
+    <details class="pv-group" open>
+      <summary>Internal <span class="muted small">— your team's channels</span></summary>
+      <div class="pv-group-body">${buildSection('internal')}</div>
+    </details>
+    <details class="pv-group" open>
+      <summary>External <span class="muted small">— client-facing channels &amp; email</span></summary>
+      <div class="pv-group-body">${buildSection('external')}</div>
+    </details>`
+    : '<div class="card"><div class="empty">Nobody is out and no holidays fall in this period — nothing to announce. 🎉</div></div>';
+
+  wrap.querySelectorAll('.ch-send').forEach(btn => btn.onclick = async e => {
+    e.preventDefault();
     if (btn.disabled) return;
     btn.disabled = true; btn.textContent = 'Sending…';
     try {
@@ -439,41 +451,51 @@ async function renderProjectView(main) {
         btn.textContent = 'Sent ✓'; btn.classList.add('btn-sent');
         toast('Posted to Slack ✓');
       }
-    } catch (e) { toast(e.message, true); btn.disabled = false; btn.textContent = 'Send'; }
+    } catch (err) { toast(err.message, true); btn.disabled = false; btn.textContent = 'Send'; }
   });
-  wrap.querySelectorAll('.email-copy').forEach(btn => btn.onclick = () => {
-    const text = btn.closest('.card').querySelector('.slack-text').textContent;
+  wrap.querySelectorAll('.email-copy').forEach(btn => btn.onclick = e => {
+    e.preventDefault();
+    const text = btn.closest('.pv-channel').querySelector('.slack-text').textContent;
     navigator.clipboard.writeText(text).then(
       () => { btn.textContent = 'Copied ✓'; toast('Email text copied — paste it into your email'); },
       () => toast('Copy failed — select the text manually', true));
   });
 }
 
-function channelCard(p, m) {
-  const ch = m.channel;
-  return `<div class="card pv-card">
-    <div class="pv-head">
-      <strong>${esc(p.name)}</strong>
-      <span class="hash">#${esc(ch.name)}</span>
-      <span class="muted small">${ch.webhook_url ? 'via webhook' : esc(m.workspace || 'workspace not set')}</span>
-      <span class="spacer"></span>
-      <button class="btn-primary ch-send" data-pid="${p.id}" data-chid="${ch.id}">Send</button>
-    </div>
-    <div class="slack-msg"><div class="slack-msg-body"><div class="slack-avatar">OD</div>
-      <div class="slack-text"><span class="bot-name">Off Duty</span><span class="bot-tag">APP</span>\n${esc(m.text)}</div></div></div>
-  </div>`;
-}
+// One collapsible project: member cards (who + when + why) then channel previews with Send.
+function projectBlock(x, chans, email) {
+  const { p, rep } = x;
+  const holidayMembers = rep.holidayGroups.reduce((n, g) => n + g.members.length, 0);
+  const counts = [
+    rep.ooo.length ? `${rep.ooo.length} OOO` : '',
+    holidayMembers ? `${holidayMembers} on holiday` : '',
+  ].filter(Boolean).join(' · ');
 
-function emailCard(p, text) {
-  return `<div class="card pv-card">
-    <div class="pv-head">
-      <strong>${esc(p.name)}</strong>
-      <span class="chip email">Email — send to the client manually</span>
-      <span class="spacer"></span>
-      <button class="btn-ghost email-copy">Copy text</button>
+  const channelCards = chans.map(m => `<div class="pv-channel">
+      <div class="pv-head">
+        <span class="hash">#${esc(m.channel.name)}</span>
+        <span class="muted small">${m.channel.webhook_url ? 'via webhook' : esc(m.workspace || 'workspace not set')}</span>
+        <span class="spacer"></span>
+        <button class="btn-primary ch-send" data-pid="${p.id}" data-chid="${m.channel.id}">Send</button>
+      </div>
+      <div class="slack-msg"><div class="slack-msg-body"><div class="slack-avatar">OD</div>
+        <div class="slack-text"><span class="bot-name">Off Duty</span><span class="bot-tag">APP</span>\n${esc(m.text)}</div></div></div>
+    </div>`).join('')
+    + (email ? `<div class="pv-channel">
+      <div class="pv-head">
+        <span class="chip email">Email — send to the client manually</span>
+        <span class="spacer"></span>
+        <button class="btn-ghost email-copy">Copy text</button>
+      </div>
+      <div class="slack-msg"><div class="slack-msg-body"><div class="slack-text">${esc(email)}</div></div></div>
+    </div>` : '');
+
+  return `<details class="pv-project" open>
+    <summary><strong>${esc(p.name)}</strong> <span class="muted small">${counts}</span></summary>
+    <div class="pv-project-body">
+      ${channelCards}
     </div>
-    <div class="slack-msg"><div class="slack-msg-body"><div class="slack-text">${esc(text)}</div></div></div>
-  </div>`;
+  </details>`;
 }
 
 /* ============================ SETTINGS ============================ */
