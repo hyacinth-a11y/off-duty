@@ -68,7 +68,7 @@ async function api(path, method = 'GET', body) {
 async function refresh() {
   [S.workspaces, S.projects, S.members, S.holidays, S.timeoffs, S.schedules, S.settings, S.win] =
     await Promise.all(['/workspaces', '/projects', '/members', '/holidays', '/timeoffs', '/schedules', '/settings', '/window'].map(p => api(p)));
-  $('#windowChip').textContent = `Notice window: ${S.win.start} → ${S.win.end}${S.win.extended ? ' (extended)' : ''}`;
+  $('#windowChip').textContent = `Notice window: ${fmt(S.win.start)} → ${fmt(S.win.end)}`;
 }
 
 function toast(msg, isError) {
@@ -99,8 +99,54 @@ $('#modal').addEventListener('click', e => { if (e.target === $('#modal')) close
 const memberName = id => (S.members.find(m => m.id === id) || {}).name || '(removed)';
 const projectName = id => (S.projects.find(p => p.id === id) || {}).name || '(removed)';
 const wsName = id => (S.workspaces.find(w => w.id === id) || {}).name || '—';
-const fmt = d => { const [y, m, dd] = d.split('-'); return new Date(Date.UTC(+y, +m - 1, +dd)).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); };
-const fmtRange = (a, b) => a === b ? fmt(a) : `${fmt(a)} – ${fmt(b)}`;
+
+// ---------------- dates: display as "July 5, 2026", accept typed input ----------------
+const fmt = iso => { const [y, m, d] = iso.split('-').map(Number); return new Date(Date.UTC(y, m - 1, d)).toLocaleString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }); };
+const fmtRange = (a, b) => {
+  if (a === b) return fmt(a);
+  const [ya, ma, da] = a.split('-').map(Number), [yb, mb, db] = b.split('-').map(Number);
+  const mn = (m, y) => new Date(Date.UTC(y, m - 1, 1)).toLocaleString('en-US', { month: 'long' });
+  if (ya === yb && ma === mb) return `${mn(ma, ya)} ${da}–${db}, ${ya}`;
+  if (ya === yb) return `${mn(ma, ya)} ${da} – ${mn(mb, yb)} ${db}, ${ya}`;
+  return `${fmt(a)} – ${fmt(b)}`;
+};
+
+const MONTH_NAMES = ['january','february','march','april','may','june','july','august','september','october','november','december'];
+// Accepts: "July 5, 2026" · "jul 5" · "5 July 2026" · "7/5/2026" (M/D/Y) · "2026-07-05". Year defaults to the current year.
+function parseDate(s) {
+  s = String(s || '').trim().toLowerCase().replace(/,/g, '').replace(/\s+/g, ' ');
+  if (!s) return '';
+  const mk = (y, m, d) => { y = +y; m = +m; d = +d; if (m < 1 || m > 12 || d < 1 || d > 31) return ''; return `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`; };
+  const thisYear = new Date().getFullYear();
+  let m;
+  if ((m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/))) return mk(m[1], m[2], m[3]);
+  if ((m = s.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})$/))) return mk(m[3].length === 2 ? '20' + m[3] : m[3], m[1], m[2]);
+  if ((m = s.match(/^([a-z]+) (\d{1,2})(?: (\d{4}))?$/))) { const i = MONTH_NAMES.findIndex(x => x.startsWith(m[1])); if (i >= 0) return mk(m[3] || thisYear, i + 1, m[2]); }
+  if ((m = s.match(/^(\d{1,2}) ([a-z]+)(?: (\d{4}))?$/))) { const i = MONTH_NAMES.findIndex(x => x.startsWith(m[2])); if (i >= 0) return mk(m[3] || thisYear, i + 1, m[1]); }
+  return '';
+}
+
+// A date field you can TYPE into ("July 5, 2026", "jul 5", "7/5/2026") with a calendar picker beside it.
+function dateField(cls, iso) {
+  return `<span class="datewrap">
+    <input type="text" class="date-text ${cls}" value="${iso ? fmt(iso) : ''}" placeholder="e.g. July 5, 2026" data-iso="${iso || ''}">
+    <input type="date" class="date-native" value="${iso || ''}" title="Pick from calendar" tabindex="-1">
+  </span>`;
+}
+function bindDateFields(body) {
+  body.querySelectorAll('.datewrap').forEach(w => {
+    const txt = $('.date-text', w), nat = $('.date-native', w);
+    txt.addEventListener('blur', () => {
+      const iso = parseDate(txt.value);
+      txt.classList.toggle('bad', !!txt.value.trim() && !iso);
+      if (iso) { txt.dataset.iso = iso; txt.value = fmt(iso); nat.value = iso; }
+      else if (!txt.value.trim()) { txt.dataset.iso = ''; nat.value = ''; }
+    });
+    txt.addEventListener('input', () => txt.classList.remove('bad'));
+    nat.onchange = () => { if (nat.value) { txt.dataset.iso = nat.value; txt.value = fmt(nat.value); txt.classList.remove('bad'); } };
+  });
+}
+const dateVal = txt => parseDate(txt.value) || txt.dataset.iso || '';
 
 /* ============================ PROJECTS ============================ */
 function renderProjects(main) {
@@ -254,7 +300,7 @@ function renderHolidays(main) {
     const rows = list.filter(h => h.location === loc);
     return `<div class="card"><h2>${loc === 'PH' ? '🇵🇭 Philippine holidays' : '🇺🇸 US holidays'} · ${esc(year)}</h2>
       ${rows.length ? `<table><thead><tr><th>Date</th><th>Holiday</th><th></th></tr></thead><tbody>
-      ${rows.map(h => `<tr><td class="mono">${h.date} <span class="muted">(${fmt(h.date)})</span></td><td>${esc(h.name)}</td>
+      ${rows.map(h => `<tr><td>${fmt(h.date)}</td><td>${esc(h.name)}</td>
         <td><button class="btn-link" data-edit="${h.id}">Edit</button><button class="btn-danger" data-del="${h.id}">Delete</button></td></tr>`).join('')}
       </tbody></table>` : `<div class="empty">No ${loc} holidays for ${esc(year)} yet.</div>`}</div>`;
   };
@@ -272,15 +318,16 @@ function renderHolidays(main) {
     <h2>${h.id ? 'Edit holiday' : 'Add holiday'}</h2>
     <label class="field"><span>Holiday name</span><input type="text" id="hName" value="${esc(h.name || '')}"></label>
     <div class="row">
-      <label class="field"><span>Date</span><input type="date" id="hDate" value="${h.date || year + '-01-01'}"></label>
+      <label class="field"><span>Date — type it (e.g. "July 5, 2026") or use the calendar</span>${dateField('hDate', h.date || '')}</label>
       <label class="field"><span>Location</span><select id="hLoc"><option value="PH" ${h.location === 'PH' ? 'selected' : ''}>Philippines</option><option value="US" ${h.location === 'US' ? 'selected' : ''}>United States</option></select></label>
     </div>
     <div class="modal-actions"><button class="btn-ghost" id="mCancel">Cancel</button><button class="btn-primary" id="mSave">Save holiday</button></div>
   `, body => {
+    bindDateFields(body);
     $('#mCancel', body).onclick = closeModal;
     busyClick($('#mSave', body), async () => {
       try {
-        const payload = { name: $('#hName', body).value.trim(), date: $('#hDate', body).value, location: $('#hLoc', body).value };
+        const payload = { name: $('#hName', body).value.trim(), date: dateVal($('.hDate', body)), location: $('#hLoc', body).value };
         await (h.id ? api('/holidays/' + h.id, 'PUT', payload) : api('/holidays', 'POST', payload));
         closeModal(); await reload('Holiday saved');
       } catch (e) { toast(e.message, true); }
@@ -303,7 +350,7 @@ function renderTimeoff(main) {
       ${rows.length ? `<table><thead><tr><th>Member</th><th>Dates</th><th>Projects</th><th>Status</th><th>Note</th><th></th></tr></thead><tbody>
       ${rows.map(t => `<tr>
         <td><strong>${esc(memberName(t.member_id))}</strong></td>
-        <td class="mono">${t.start_date === t.end_date ? t.start_date : t.start_date + ' → ' + t.end_date}</td>
+        <td>${fmtRange(t.start_date, t.end_date)}</td>
         <td>${t.project_ids.map(id => `<span class="chip">${esc(projectName(id))}</span>`).join(' ') || '<span class="muted small">—</span>'}</td>
         <td><span class="badge ${t.status}">${t.status === 'approved' ? 'Approved' : 'Pending approval'}</span></td>
         <td class="small muted">${esc(t.note) || ''}</td>
@@ -319,8 +366,8 @@ function renderTimeoff(main) {
       <label class="field"><span>Team member</span>
         <select id="tMember"><option value="">— pick member —</option>${S.members.map(m => `<option value="${m.id}" ${m.id === t.member_id ? 'selected' : ''}>${esc(m.name)} (${esc(m.status)})</option>`).join('')}</select></label>
       <div class="row">
-        <label class="field"><span>From</span><input type="date" id="tStart" value="${t.start_date}"></label>
-        <label class="field"><span>To (same day is fine)</span><input type="date" id="tEnd" value="${t.end_date}"></label>
+        <label class="field"><span>From — type it (e.g. "July 14") or use the calendar</span>${dateField('tStart', t.start_date)}</label>
+        <label class="field"><span>To (same day is fine)</span>${dateField('tEnd', t.end_date)}</label>
         <label class="field"><span>Status</span><select id="tStatus"><option value="pending" ${t.status === 'pending' ? 'selected' : ''}>Pending approval</option><option value="approved" ${t.status === 'approved' ? 'selected' : ''}>Approved</option></select></label>
       </div>
       <label class="field"><span>Projects affected — auto-selected from the Projects section when you pick a member (you can still adjust)</span>
@@ -328,6 +375,7 @@ function renderTimeoff(main) {
       <label class="field"><span>Note (optional)</span><input type="text" id="tNote" value="${esc(t.note)}"></label>
       <div class="modal-actions"><button class="btn-ghost" id="mCancel">Cancel</button><button class="btn-primary" id="mSave">Save entry</button></div>
     `, body => {
+      bindDateFields(body);
       const tpMs = multiSelect($('#tpSelect', body), {
         options: S.projects.map(p => ({ id: p.id, label: p.name, sub: p.jira_name || '' })),
         selected: t.project_ids || [],
@@ -343,8 +391,8 @@ function renderTimeoff(main) {
         try {
           const payload = {
             member_id: +$('#tMember', body).value,
-            start_date: $('#tStart', body).value,
-            end_date: $('#tEnd', body).value || $('#tStart', body).value,
+            start_date: dateVal($('.tStart', body)),
+            end_date: dateVal($('.tEnd', body)) || dateVal($('.tStart', body)),
             status: $('#tStatus', body).value,
             project_ids: tpMs.get(),
             note: $('#tNote', body).value.trim(),
@@ -364,101 +412,76 @@ function renderTimeoff(main) {
 async function renderProjectView(main) {
   main.innerHTML = `<div class="section-head">
       <h1>Project View</h1>
-      <p>Who's out per project this period, exactly what each Slack channel will receive, and when it goes out automatically.</p>
-    </div><div id="pvCards"><div class="empty">Loading…</div></div>`;
+      <p>Covers ${fmt(S.win.start)} → ${fmt(S.win.end)}. Press Send on a card to post it to that Slack channel.</p>
+    </div><div id="pvCards"><div class="empty">Loading previews…</div></div>`;
   const wrap = $('#pvCards');
   if (!S.projects.length) { wrap.innerHTML = '<div class="card"><div class="empty">No projects yet — add one in the Projects section.</div></div>'; return; }
   const previews = await Promise.all(S.projects.map(p => api(`/projects/${p.id}/preview`).catch(() => null)));
-  const reports = await Promise.all(S.projects.map(p => api(`/projects/${p.id}/report`).catch(() => null)));
 
-  wrap.innerHTML = S.projects.map((p, i) => {
-    const rep = reports[i], prev = previews[i];
-    const scheds = S.schedules.filter(s => s.project_id === p.id);
-    const ooo = rep ? rep.ooo : [], hols = rep ? rep.holidayGroups : [];
-    return `<div class="card" data-pid="${p.id}">
-      <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">
-        <h2 style="margin:0">${esc(p.name)}</h2>
-        <span class="chip ${p.type}">${p.type}</span>
-        <span class="muted small mono">${esc(p.jira_name)}</span>
-        <span class="spacer" style="flex:1"></span>
-        <button class="btn-ghost pv-send">Send all channels</button>
-      </div>
-      <div class="pv-grid" style="margin-top:12px">
-        <div>
-          <strong>Out of office (${rep ? rep.win.start : ''} → ${rep ? rep.win.end : ''})</strong>
-          ${ooo.length ? `<ul class="pv-list">${ooo.map(t => `<li>${esc(t.member.name)} — <span class="mono">${fmtRange(t.start_date, t.end_date)}</span></li>`).join('')}</ul>` : '<div class="muted small">Nobody scheduled out 🎉</div>'}
-        </div>
-        <div>
-          <strong><span class="holiday-dot">●</span> Observing holidays</strong>
-          ${hols.length ? `<ul class="pv-list">${hols.map(g => `<li><span class="mono">${fmt(g.date)}</span> ${esc(g.name)} (${g.location}): ${g.members.map(m => esc(m.name)).join(', ')}</li>`).join('')}</ul>` : '<div class="muted small">No holidays in this period</div>'}
-        </div>
-      </div>
-      <hr class="divider">
-      <strong>Channel previews</strong> <span class="muted small">— press Send on a channel to post just that message, or send all at once.</span>
-      ${prev && prev.messages.length ? prev.messages.map(m => slackCard(m.channel, m.workspace, m.text)).join('') : ''}
-      ${prev && prev.emailFallback ? `<div class="slack-msg"><div class="slack-msg-head"><span class="chip email">Email — send to the client manually</span><button class="btn-ghost email-copy" style="margin-left:auto;padding:4px 12px;font-size:13px">Copy text</button></div><div class="slack-msg-body"><div class="slack-text">${esc(prev.emailFallback)}</div></div></div>` : ''}
-      ${prev && !prev.messages.length && !prev.emailFallback ? '<div class="muted small" style="margin-top:6px">No Slack channels configured for this project yet.</div>' : ''}
-      <hr class="divider">
-      <strong>Automatic schedule</strong> <span class="muted small">— only fires while the app is awake. On free hosting the app sleeps when idle, so rely on the Send buttons; on always-on (paid) hosting this works fully.</span>
-      <div class="scheds">${scheds.map(s => `
-        <div class="sched-row" data-sid="${s.id}">
-          <span>Every <strong>${DAYS[s.day]}</strong> at <span class="mono">${s.time}</span> (${esc(S.settings.timezone)})</span>
-          <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" class="sch-en" ${s.enabled ? 'checked' : ''}> enabled</label>
-          <span class="muted small">${s.last_sent ? 'last sent ' + s.last_sent.replace('T', ' ') : 'never sent yet'}</span>
-          <button class="btn-danger sch-del">Remove</button>
-        </div>`).join('') || '<div class="muted small">No automatic schedule yet — notices only go out when you press Send.</div>'}
-      </div>
-      <div class="row" style="margin-top:10px;align-items:flex-end">
-        <label class="field" style="margin:0"><span>Day</span><select class="new-day">${DAYS.map((d, i2) => `<option value="${i2}" ${i2 === 1 ? 'selected' : ''}>${d}</option>`).join('')}</select></label>
-        <label class="field" style="margin:0"><span>Time</span><input type="time" class="new-time" value="09:00"></label>
-        <button class="btn-ghost pv-addsched" style="flex:0">Add schedule</button>
-      </div>
-    </div>`;
-  }).join('');
+  const internalCards = [], externalCards = [];
+  S.projects.forEach((p, i) => {
+    const prev = previews[i];
+    if (!prev) return;
+    for (const m of prev.messages) {
+      const card = channelCard(p, m);
+      (m.channel.purpose === 'external' ? externalCards : internalCards).push(card);
+    }
+    if (prev.emailFallback) externalCards.push(emailCard(p, prev.emailFallback));
+  });
 
-  wrap.querySelectorAll('.card').forEach(card => {
-    const pid = +card.dataset.pid;
-    const doSend = async (btn, channelId, label) => {
-      btn.disabled = true; const old = btn.textContent; btn.textContent = 'Sending…';
-      try {
-        const r = await api(`/projects/${pid}/send`, 'POST', channelId ? { channel_id: channelId } : {});
-        if (r.error) toast(r.error, true);
-        else {
-          const fails = (r.results || []).filter(x => !x.ok);
-          if (!(r.results || []).length) toast('Nothing to send — add a Slack channel to this project first', true);
-          else if (fails.length) toast('Send failed — ' + fails.map(f => `#${f.channel}: ${f.error}`).join(' · '), true);
-          else toast(label + ' ✓');
-        }
-      } catch (e) { toast(e.message, true); }
-      btn.disabled = false; btn.textContent = old;
-    };
-    $('.pv-send', card).onclick = e => doSend(e.target, null, 'Sent to all channels');
-    card.querySelectorAll('.ch-send').forEach(b => b.onclick = () => doSend(b, +b.dataset.chid, 'Sent'));
-    const copyBtn = $('.email-copy', card);
-    if (copyBtn) copyBtn.onclick = () => {
-      const text = copyBtn.closest('.slack-msg').querySelector('.slack-text').textContent;
-      navigator.clipboard.writeText(text).then(() => toast('Email text copied — paste it into your email'), () => toast('Copy failed — select the text manually', true));
-    };
-    busyClick($('.pv-addsched', card), async () => {
-      try {
-        await api('/schedules', 'POST', { project_id: pid, day: +$('.new-day', card).value, time: $('.new-time', card).value });
-        await reload('Schedule added');
-      } catch (e) { toast(e.message, true); }
-    });
-    card.querySelectorAll('.sched-row').forEach(row => {
-      const sid = +row.dataset.sid;
-      $('.sch-en', row).onchange = async e => { await api('/schedules/' + sid, 'PUT', { enabled: e.target.checked }); toast(e.target.checked ? 'Schedule enabled' : 'Schedule paused'); };
-      $('.sch-del', row).onclick = async () => { await api('/schedules/' + sid, 'DELETE'); await reload('Schedule removed'); };
-    });
+  wrap.innerHTML = `
+    <h2 class="pv-section">Internal <span class="muted small">— your team's channels</span></h2>
+    ${internalCards.join('') || '<div class="card"><div class="empty">No internal channels configured yet — add them per project in the Projects section.</div></div>'}
+    <h2 class="pv-section">External <span class="muted small">— client-facing channels &amp; email</span></h2>
+    ${externalCards.join('') || '<div class="card"><div class="empty">No external channels or email-marked projects yet.</div></div>'}`;
+
+  wrap.querySelectorAll('.ch-send').forEach(btn => btn.onclick = async () => {
+    if (btn.disabled) return;
+    btn.disabled = true; btn.textContent = 'Sending…';
+    try {
+      const r = await api(`/projects/${btn.dataset.pid}/send`, 'POST', { channel_id: +btn.dataset.chid });
+      const fail = (r.results || []).find(x => !x.ok);
+      if (r.error || fail) {
+        toast('Send failed — ' + (r.error || fail.error), true);
+        btn.disabled = false; btn.textContent = 'Send';
+      } else {
+        btn.textContent = 'Sent ✓'; btn.classList.add('btn-sent');
+        toast('Posted to Slack ✓');
+      }
+    } catch (e) { toast(e.message, true); btn.disabled = false; btn.textContent = 'Send'; }
+  });
+  wrap.querySelectorAll('.email-copy').forEach(btn => btn.onclick = () => {
+    const text = btn.closest('.card').querySelector('.slack-text').textContent;
+    navigator.clipboard.writeText(text).then(
+      () => { btn.textContent = 'Copied ✓'; toast('Email text copied — paste it into your email'); },
+      () => toast('Copy failed — select the text manually', true));
   });
 }
 
-function slackCard(channel, workspace, text) {
-  return `<div class="slack-msg">
-    <div class="slack-msg-head"><span class="hash">#${esc(channel.name)}</span><span class="chip ${channel.purpose}">${channel.purpose}</span><span class="ws">${channel.webhook_url ? 'via webhook ✓' : esc(workspace || 'workspace not set')}</span>
-      <button class="btn-primary ch-send" data-chid="${channel.id}" style="padding:4px 12px;font-size:13px">Send</button></div>
-    <div class="slack-msg-body"><div class="slack-avatar">OD</div>
-      <div class="slack-text"><span class="bot-name">Off Duty</span><span class="bot-tag">APP</span>\n${esc(text)}</div></div>
+function channelCard(p, m) {
+  const ch = m.channel;
+  return `<div class="card pv-card">
+    <div class="pv-head">
+      <strong>${esc(p.name)}</strong>
+      <span class="hash">#${esc(ch.name)}</span>
+      <span class="muted small">${ch.webhook_url ? 'via webhook' : esc(m.workspace || 'workspace not set')}</span>
+      <span class="spacer"></span>
+      <button class="btn-primary ch-send" data-pid="${p.id}" data-chid="${ch.id}">Send</button>
+    </div>
+    <div class="slack-msg"><div class="slack-msg-body"><div class="slack-avatar">OD</div>
+      <div class="slack-text"><span class="bot-name">Off Duty</span><span class="bot-tag">APP</span>\n${esc(m.text)}</div></div></div>
+  </div>`;
+}
+
+function emailCard(p, text) {
+  return `<div class="card pv-card">
+    <div class="pv-head">
+      <strong>${esc(p.name)}</strong>
+      <span class="chip email">Email — send to the client manually</span>
+      <span class="spacer"></span>
+      <button class="btn-ghost email-copy">Copy text</button>
+    </div>
+    <div class="slack-msg"><div class="slack-msg-body"><div class="slack-text">${esc(text)}</div></div></div>
   </div>`;
 }
 
