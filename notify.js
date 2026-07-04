@@ -112,7 +112,23 @@ async function slackApi(token, method, payload) {
     headers: { 'Content-Type': 'application/json; charset=utf-8', Authorization: `Bearer ${token}` },
     body: JSON.stringify(payload),
   });
-  return res.json();
+  const data = await res.json();
+  if (data && !data.ok && data.error === 'ratelimited') {
+    data._retryAfter = parseInt(res.headers.get('retry-after') || '20', 10);
+  }
+  return data;
+}
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// Post once; if Slack says "ratelimited", wait the time it asks for (up to 45s) and retry once.
+async function postMessage(token, channel, text) {
+  let r = await slackApi(token, 'chat.postMessage', { channel, text });
+  if (!r.ok && r.error === 'ratelimited') {
+    await sleep(Math.min(r._retryAfter || 20, 45) * 1000);
+    r = await slackApi(token, 'chat.postMessage', { channel, text });
+  }
+  return r;
 }
 
 const looksLikeId = v => /^[CGD][A-Z0-9]{6,}$/i.test(v.replace(/^#/, ''));
@@ -122,7 +138,7 @@ function friendlyError(err, channelName) {
   const map = {
     not_in_channel: `the bot isn't in #${channelName} yet — open that channel in Slack and type /invite @YourBotName`,
     channel_not_found: `Slack can't find "${channelName}" — check the spelling; if it's a private channel, invite the bot first and use the channel ID (Slack: channel name → ⋯ → Copy channel ID) instead of the name`,
-    ratelimited: 'Slack is rate-limiting requests — wait about a minute, then press Send again',
+    ratelimited: 'Slack is rate-limiting the bot (too many requests recently) — leave it alone for ~10 minutes, then press Send once',
     invalid_auth: 'the bot token looks invalid — re-copy it from api.slack.com and update it in Settings',
     token_revoked: 'the bot token was revoked — reinstall the Slack app and paste the new token in Settings',
     account_inactive: 'the Slack app was uninstalled — reinstall it and update the token in Settings',
@@ -155,17 +171,17 @@ async function postToChannel(token, ch, text) {
   const name = ch.name.replace(/^#/, '');
   let target = ch.resolved_id || (looksLikeId(name) ? name : null);
   if (target) {
-    const r = await slackApi(token, 'chat.postMessage', { channel: target, text });
+    const r = await postMessage(token, target, text);
     if (r.ok) return r;
     if (r.error !== 'channel_not_found') throw new Error(friendlyError(r.error, name));
     ch.resolved_id = null; save(); // cached ID went stale (channel recreated?) — retry by name below
   }
-  let r = await slackApi(token, 'chat.postMessage', { channel: '#' + name, text });
+  let r = await postMessage(token, '#' + name, text);
   if (r.ok) { if (r.channel) { ch.resolved_id = r.channel; save(); } return r; }
   if (r.error !== 'channel_not_found') throw new Error(friendlyError(r.error, name));
   const id = await resolveChannelId(token, name);
   ch.resolved_id = id; save();
-  r = await slackApi(token, 'chat.postMessage', { channel: id, text });
+  r = await postMessage(token, id, text);
   if (!r.ok) throw new Error(friendlyError(r.error, name));
   return r;
 }
@@ -196,7 +212,10 @@ async function sendProjectNotifications(projectId, now = new Date(), channelId =
   const targets = channelId ? built.messages.filter(m => m.channel.id === channelId) : built.messages;
   if (channelId && !targets.length) return { ok: false, error: 'Channel not found on this project' };
   const results = [];
+  let first = true;
   for (const m of targets) {
+    if (!first) await sleep(1200); // pace multi-channel sends so Slack never sees a burst
+    first = false;
     if (!m.workspace || !m.workspace.bot_token) {
       results.push({ channel: m.channel.name, ok: false, error: 'No workspace / bot token configured for this channel' });
       continue;
