@@ -45,9 +45,17 @@ function reportingWindow(now = new Date()) {
 
 function fmtDate(s) {
   const [y, m, d] = s.split('-').map(Number);
-  return new Date(Date.UTC(y, m - 1, d)).toLocaleString('en-US', { month: 'short', day: 'numeric' });
+  return new Date(Date.UTC(y, m - 1, d)).toLocaleString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 }
-function fmtRange(a, b) { return a === b ? fmtDate(a) : `${fmtDate(a)} – ${fmtDate(b)}`; }
+// Smart ranges: "July 14–16, 2026" · "July 30 – August 2, 2026" · "December 29, 2026 – January 2, 2027"
+function fmtRange(a, b) {
+  if (a === b) return fmtDate(a);
+  const [ya, ma, da] = a.split('-').map(Number), [yb, mb, db] = b.split('-').map(Number);
+  const mn = (m, y) => new Date(Date.UTC(y, m - 1, 1)).toLocaleString('en-US', { month: 'long' });
+  if (ya === yb && ma === mb) return `${mn(ma, ya)} ${da}–${db}, ${ya}`;
+  if (ya === yb) return `${mn(ma, ya)} ${da} – ${mn(mb, yb)} ${db}, ${ya}`;
+  return `${fmtDate(a)} – ${fmtDate(b)}`;
+}
 
 const HOLIDAY_STATUS = { 'PH Employee': 'PH', 'US Employee': 'US' }; // Contractors observe none
 
