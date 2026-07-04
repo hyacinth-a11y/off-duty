@@ -137,3 +137,61 @@ dialog::backdrop { background: rgba(23, 41, 59, 0.45); }
   .card { animation: rise 0.18s ease-out; }
   @keyframes rise { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 }
+
+/* ---------- searchable multi-select ---------- */
+.ms { position: relative; }
+.ms-box {
+  display: flex; flex-wrap: wrap; gap: 5px; align-items: center;
+  border: 1.5px solid var(--line); border-radius: 8px; padding: 6px 8px;
+  background: var(--input-bg, #fff); cursor: text; min-height: 40px;
+}
+.ms-box:focus-within { outline: 2px solid var(--primary); outline-offset: 1px; }
+.ms-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: var(--chip-sel-bg, #eaf1f5); color: var(--primary-ink);
+  border: 1px solid var(--chip-sel-line, #cfe0e8);
+  border-radius: 999px; padding: 2px 6px 2px 10px; font-size: 13.5px; font-weight: 500;
+}
+.ms-chip button { background: none; border: none; color: inherit; font-size: 15px; padding: 0 3px; cursor: pointer; line-height: 1; }
+.ms-chip button:hover { color: var(--coral); }
+.ms-input { flex: 1; min-width: 120px; border: none !important; outline: none !important; background: transparent !important; padding: 4px !important; font-size: 14.5px; color: var(--ink); font-family: var(--font-body); }
+.ms-list {
+  position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 30;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 8px;
+  max-height: 190px; overflow: auto; box-shadow: 0 10px 28px rgba(0,0,0,0.18);
+}
+.ms-item { padding: 8px 12px; cursor: pointer; font-size: 14px; }
+.ms-item:hover { background: var(--hover-bg, #eef4f7); }
+.ms-empty { padding: 10px 12px; color: var(--ink-soft); font-size: 13.5px; }
+
+/* ---------- theme toggle ---------- */
+.theme-toggle { background: transparent; border: 1.5px solid var(--line); border-radius: 999px; padding: 5px 10px; font-size: 15px; cursor: pointer; }
+.theme-toggle:hover { border-color: var(--primary); }
+
+/* ---------- night mode ---------- */
+:root { --input-bg: #ffffff; --hover-bg: #eef4f7; --chip-sel-bg: #eaf1f5; --chip-sel-line: #cfe0e8; }
+[data-theme="dark"] {
+  --bg: #111820; --surface: #1a232d; --ink: #e7edf3; --ink-soft: #9cb0c2;
+  --line: #2d3a48; --primary: #3f9ec2; --primary-ink: #a9d8ea;
+  --input-bg: #141c25; --hover-bg: #223140; --chip-sel-bg: #1b3340; --chip-sel-line: #2c526b;
+}
+[data-theme="dark"] body { background: var(--bg); color: var(--ink); }
+[data-theme="dark"] .btn-primary { background: #1f7396; }
+[data-theme="dark"] .btn-primary:hover { background: #2989b1; }
+[data-theme="dark"] .btn-ghost { color: var(--primary-ink); }
+[data-theme="dark"] .window-chip { background: #1b2a35; border-color: #2c4656; color: var(--primary-ink); }
+[data-theme="dark"] .chip { background: #222f3b; border-color: #33424f; color: var(--ink-soft); }
+[data-theme="dark"] .chip.internal { background: #17323f; border-color: #275069; color: #9fd3e8; }
+[data-theme="dark"] .chip.external { background: #3a2d14; border-color: #5d4a20; color: #f0c069; }
+[data-theme="dark"] .chip.email { background: #2b2340; border-color: #453768; color: #c3aef0; }
+[data-theme="dark"] .badge.approved { background: #16352a; color: #6fd0a8; }
+[data-theme="dark"] .badge.pending { background: #38300f; color: #e3b95c; }
+[data-theme="dark"] .badge.holiday { background: #3a2d14; color: #f0c069; }
+[data-theme="dark"] .slack-msg-head { background: #141c25; }
+[data-theme="dark"] .slack-msg-body { background: var(--surface); }
+[data-theme="dark"] .slack-text .bot-tag { background: #2d3a48; color: #9cb0c2; }
+[data-theme="dark"] dialog { background: var(--surface); color: var(--ink); }
+[data-theme="dark"] input[type=text], [data-theme="dark"] input[type=date], [data-theme="dark"] input[type=time],
+[data-theme="dark"] input[type=password], [data-theme="dark"] select, [data-theme="dark"] textarea,
+[data-theme="dark"] .nav-select { background: var(--input-bg); color: var(--ink); border-color: var(--line); color-scheme: dark; }
+[data-theme="dark"] .check-grid { border-color: var(--line); }

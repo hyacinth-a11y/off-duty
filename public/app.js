@@ -6,6 +6,47 @@ const STATUSES = ['PH Employee', 'US Employee', 'Contractor'];
 
 const S = { workspaces: [], projects: [], members: [], holidays: [], timeoffs: [], schedules: [], settings: {}, win: null };
 
+// Searchable multi-select: type to filter, click to add, × on a chip to remove.
+// Returns { get(), set(ids) }.
+function multiSelect(mount, { options, selected = [], placeholder = 'Type a name to search…' }) {
+  let sel = [...selected];
+  mount.classList.add('ms');
+  mount.innerHTML = `<div class="ms-box"><span class="ms-chips" style="display:contents"></span><input class="ms-input" placeholder="${esc(placeholder)}"></div><div class="ms-list" hidden></div>`;
+  const chipsEl = $('.ms-chips', mount), input = $('.ms-input', mount), list = $('.ms-list', mount);
+  const byId = id => options.find(o => o.id === id);
+  const renderChips = () => {
+    chipsEl.innerHTML = sel.map(id => { const o = byId(id); return o ? `<span class="ms-chip">${esc(o.label)}<button type="button" data-x="${id}" title="Remove">×</button></span>` : ''; }).join('');
+    chipsEl.querySelectorAll('[data-x]').forEach(b => b.onclick = e => {
+      e.stopPropagation(); sel = sel.filter(i => i !== +b.dataset.x); renderChips(); renderList();
+    });
+  };
+  const renderList = () => {
+    const q = input.value.trim().toLowerCase();
+    const items = options.filter(o => !sel.includes(o.id) && (!q || (o.label + ' ' + (o.sub || '')).toLowerCase().includes(q)));
+    list.innerHTML = items.length
+      ? items.map(o => `<div class="ms-item" data-id="${o.id}">${esc(o.label)}${o.sub ? ` <span class="muted small">· ${esc(o.sub)}</span>` : ''}</div>`).join('')
+      : `<div class="ms-empty">${options.length ? 'No matches' : 'Nothing to pick yet'}</div>`;
+    list.querySelectorAll('.ms-item').forEach(el => el.onclick = () => {
+      sel.push(+el.dataset.id); input.value = ''; renderChips(); renderList(); input.focus();
+    });
+  };
+  input.oninput = renderList;
+  input.onfocus = () => { list.hidden = false; renderList(); };
+  $('.ms-box', mount).onclick = () => input.focus();
+  document.addEventListener('click', e => { if (mount.isConnected && !mount.contains(e.target)) list.hidden = true; });
+  renderChips();
+  return { get: () => [...sel], set: ids => { sel = [...ids]; renderChips(); renderList(); } };
+}
+
+// ---------------- night mode ----------------
+function applyTheme(t) {
+  document.documentElement.dataset.theme = t;
+  const b = $('#themeToggle'); if (b) b.textContent = t === 'dark' ? '☀️' : '🌙';
+}
+let theme = localStorage.getItem('offduty-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+applyTheme(theme);
+$('#themeToggle').onclick = () => { theme = theme === 'dark' ? 'light' : 'dark'; localStorage.setItem('offduty-theme', theme); applyTheme(theme); };
+
 async function api(path, method = 'GET', body) {
   const r = await fetch('/api' + path, {
     method, headers: { 'Content-Type': 'application/json' },
@@ -90,11 +131,14 @@ function projectForm(p) {
   p = p || { name: '', jira_name: '', workspace_id: null, type: 'external', notify_via_email: false, contacts: [], channels: [], member_ids: [] };
   const wsOpts = sel => `<option value="">— pick workspace —</option>` + S.workspaces.map(w => `<option value="${w.id}" ${w.id === sel ? 'selected' : ''}>${esc(w.name)}</option>`).join('');
   const contactRow = v => `<input type="text" class="contact" value="${esc(v)}" placeholder="Contact name" style="margin-bottom:6px">`;
-  const channelRow = c => `<div class="row channel-row" style="margin-bottom:8px">
-      <input type="text" class="ch-name" value="${esc(c.name || '')}" placeholder="channel-name (no #)">
-      <select class="ch-ws">${wsOpts(c.workspace_id)}</select>
-      <select class="ch-purpose"><option value="internal" ${c.purpose !== 'external' ? 'selected' : ''}>Internal</option><option value="external" ${c.purpose === 'external' ? 'selected' : ''}>External (client)</option></select>
-      <button type="button" class="btn-danger ch-del" style="flex:0">✕</button>
+  const channelRow = c => `<div class="channel-row" style="margin-bottom:12px;border:1px dashed var(--line);border-radius:8px;padding:8px">
+      <div class="row">
+        <input type="text" class="ch-name" value="${esc(c.name || '')}" placeholder="channel-name (label)">
+        <select class="ch-ws">${wsOpts(c.workspace_id)}</select>
+        <select class="ch-purpose"><option value="internal" ${c.purpose !== 'external' ? 'selected' : ''}>Internal</option><option value="external" ${c.purpose === 'external' ? 'selected' : ''}>External (client)</option></select>
+        <button type="button" class="btn-danger ch-del" style="flex:0">✕</button>
+      </div>
+      <input type="text" class="ch-webhook" value="${esc(c.webhook_url || '')}" placeholder="Webhook URL (recommended): https://hooks.slack.com/services/…" style="margin-top:6px">
     </div>`;
   openModal(`
     <h2>${p.id ? 'Edit project' : 'Add project'}</h2>
@@ -110,16 +154,21 @@ function projectForm(p) {
     <label class="field"><span>Point of contacts (add as many as you need)</span>
       <div id="contacts">${(p.contacts.length ? p.contacts : ['']).map(contactRow).join('')}</div>
       <button type="button" class="btn-ghost" id="addContact">+ Add contact</button></label>
-    <label class="field"><span>Slack channels (a project usually has one internal + one external)</span>
+    <label class="field"><span>Slack channels — easiest: paste a <strong>Webhook URL</strong> per channel (Slack app → Incoming Webhooks → Add New Webhook → pick the channel). With a webhook, no bot invite or workspace token is needed; the name is just a label.</span>
       <div id="channels">${p.channels.map(channelRow).join('')}</div>
       <button type="button" class="btn-ghost" id="addChannel">+ Add channel</button></label>
     <label class="field" style="display:flex;gap:8px;align-items:center">
       <input type="checkbox" id="pEmail" ${p.notify_via_email ? 'checked' : ''} style="width:auto">
       <span style="margin:0">No external Slack channel — mark as <strong>Email</strong> (I'll notify the client manually)</span></label>
     <label class="field"><span>Team members on this project — from the Team Members section. This is the source of truth: it auto-fills projects on time-off entries and drives the holiday list.</span>
-      <div class="check-grid">${S.members.map(m => `<label><input type="checkbox" class="pm" value="${m.id}" ${p.member_ids.includes(m.id) ? 'checked' : ''}>${esc(m.name)} <span class="muted small">${esc(m.status)}</span></label>`).join('') || '<span class="muted small">No members yet — add them under Team Members.</span>'}</div></label>
+      <div id="pmSelect"></div></label>
     <div class="modal-actions"><button class="btn-ghost" id="mCancel">Cancel</button><button class="btn-primary" id="mSave">Save project</button></div>
   `, body => {
+    const pmMs = multiSelect($('#pmSelect', body), {
+      options: S.members.map(m => ({ id: m.id, label: m.name, sub: m.status })),
+      selected: p.member_ids || [],
+      placeholder: 'Type a member name to add…',
+    });
     $('#addContact', body).onclick = () => $('#contacts', body).insertAdjacentHTML('beforeend', contactRow(''));
     $('#addChannel', body).onclick = () => { $('#channels', body).insertAdjacentHTML('beforeend', channelRow({})); bindDel(); };
     const bindDel = () => body.querySelectorAll('.ch-del').forEach(x => x.onclick = () => x.closest('.channel-row').remove());
@@ -137,8 +186,9 @@ function projectForm(p) {
           name: $('.ch-name', r).value.trim().replace(/^#/, ''),
           workspace_id: +$('.ch-ws', r).value || null,
           purpose: $('.ch-purpose', r).value,
-        })).filter(c => c.name),
-        member_ids: [...body.querySelectorAll('.pm:checked')].map(i => +i.value),
+          webhook_url: $('.ch-webhook', r).value.trim(),
+        })).filter(c => c.name || c.webhook_url),
+        member_ids: pmMs.get(),
       };
       try {
         await (p.id ? api('/projects/' + p.id, 'PUT', payload) : api('/projects', 'POST', payload));
@@ -266,17 +316,19 @@ function renderTimeoff(main) {
         <label class="field"><span>Status</span><select id="tStatus"><option value="pending" ${t.status === 'pending' ? 'selected' : ''}>Pending approval</option><option value="approved" ${t.status === 'approved' ? 'selected' : ''}>Approved</option></select></label>
       </div>
       <label class="field"><span>Projects affected — auto-selected from the Projects section when you pick a member (you can still adjust)</span>
-        <div class="check-grid">${S.projects.map(p => `<label><input type="checkbox" class="tp" value="${p.id}" ${t.project_ids.includes(p.id) ? 'checked' : ''}>${esc(p.name)}</label>`).join('') || '<span class="muted small">No projects yet — add them in the Projects section.</span>'}</div></label>
+        <div id="tpSelect"></div></label>
       <label class="field"><span>Note (optional)</span><input type="text" id="tNote" value="${esc(t.note)}"></label>
       <div class="modal-actions"><button class="btn-ghost" id="mCancel">Cancel</button><button class="btn-primary" id="mSave">Save entry</button></div>
     `, body => {
-      // When a member is chosen, tick the projects they belong to (from the Projects section rosters)
+      const tpMs = multiSelect($('#tpSelect', body), {
+        options: S.projects.map(p => ({ id: p.id, label: p.name, sub: p.jira_name || '' })),
+        selected: t.project_ids || [],
+        placeholder: 'Type a project name to add…',
+      });
+      // When a member is chosen, select the projects they belong to (from the Projects section rosters)
       $('#tMember', body).onchange = e => {
         const mid = +e.target.value;
-        body.querySelectorAll('.tp').forEach(cb => {
-          const proj = S.projects.find(p => p.id === +cb.value);
-          cb.checked = !!(proj && (proj.member_ids || []).includes(mid));
-        });
+        tpMs.set(S.projects.filter(p => (p.member_ids || []).includes(mid)).map(p => p.id));
       };
       $('#mCancel', body).onclick = closeModal;
       busyClick($('#mSave', body), async () => {
@@ -286,7 +338,7 @@ function renderTimeoff(main) {
             start_date: $('#tStart', body).value,
             end_date: $('#tEnd', body).value || $('#tStart', body).value,
             status: $('#tStatus', body).value,
-            project_ids: [...body.querySelectorAll('.tp:checked')].map(i => +i.value),
+            project_ids: tpMs.get(),
             note: $('#tNote', body).value.trim(),
           };
           await (t.id ? api('/timeoffs/' + t.id, 'PUT', payload) : api('/timeoffs', 'POST', payload));
@@ -395,7 +447,7 @@ async function renderProjectView(main) {
 
 function slackCard(channel, workspace, text) {
   return `<div class="slack-msg">
-    <div class="slack-msg-head"><span class="hash">#${esc(channel.name)}</span><span class="chip ${channel.purpose}">${channel.purpose}</span><span class="ws">${esc(workspace || 'workspace not set')}</span>
+    <div class="slack-msg-head"><span class="hash">#${esc(channel.name)}</span><span class="chip ${channel.purpose}">${channel.purpose}</span><span class="ws">${channel.webhook_url ? 'via webhook ✓' : esc(workspace || 'workspace not set')}</span>
       <button class="btn-primary ch-send" data-chid="${channel.id}" style="padding:4px 12px;font-size:13px">Send</button></div>
     <div class="slack-msg-body"><div class="slack-avatar">OD</div>
       <div class="slack-text"><span class="bot-name">Off Duty</span><span class="bot-tag">APP</span>\n${esc(text)}</div></div>
