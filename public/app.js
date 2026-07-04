@@ -332,11 +332,20 @@ function renderHolidays(main) {
 
 /* ============================ TIME OFF ============================ */
 function renderTimeoff(main) {
-  const rows = [...S.timeoffs].sort((a, b) => b.start_date.localeCompare(a.start_date));
+  const sortMode = S._toSort || 'date';
+  const rows = [...S.timeoffs].sort(sortMode === 'name'
+    ? (a, b) => memberName(a.member_id).localeCompare(memberName(b.member_id), undefined, { sensitivity: 'base' }) || a.start_date.localeCompare(b.start_date)
+    : (a, b) => a.start_date.localeCompare(b.start_date) || memberName(a.member_id).localeCompare(memberName(b.member_id)));
   main.innerHTML = `
     <div class="section-head">
       <h1>Time-Off Entries</h1><p>The source of truth for requests. Members come from Team Members; projects come from Projects.</p>
-      <span class="spacer"></span><button class="btn-primary" id="addTo">Add time-off entry</button>
+      <span class="spacer"></span>
+      <label class="small muted" style="display:flex;align-items:center;gap:6px">Sort by
+        <select id="toSort" style="width:auto">
+          <option value="date" ${sortMode === 'date' ? 'selected' : ''}>Time-off date (earliest first)</option>
+          <option value="name" ${sortMode === 'name' ? 'selected' : ''}>Member name (A–Z)</option>
+        </select></label>
+      <button class="btn-primary" id="addTo">Add time-off entry</button>
     </div>
     <div class="card">
       ${rows.length ? `<table><thead><tr><th>Member</th><th>Dates</th><th>Projects</th><th>Status</th><th>Note</th><th></th></tr></thead><tbody>
@@ -395,6 +404,7 @@ function renderTimeoff(main) {
       });
     });
   };
+  $('#toSort').onchange = e => { S._toSort = e.target.value; renderTimeoff(main); };
   $('#addTo').onclick = () => form();
   main.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => form(S.timeoffs.find(t => t.id === +b.dataset.edit)));
   main.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => { await api('/timeoffs/' + b.dataset.del, 'DELETE'); await reload('Deleted'); });
