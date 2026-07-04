@@ -214,3 +214,7 @@ dialog::backdrop { background: rgba(23, 41, 59, 0.45); }
 .date-native { width: 44px; flex: 0 0 44px; padding: 8px 4px; cursor: pointer; color: transparent; }
 .date-native::-webkit-calendar-picker-indicator { cursor: pointer; }
 .date-text.bad { border-color: var(--coral); outline-color: var(--coral); }
+
+/* channel lines inside the Projects table */
+.ch-line { display: flex; align-items: center; gap: 6px; padding: 2px 0; white-space: nowrap; }
+.ch-line .hash { font-family: var(--font-mono); font-size: 13px; font-weight: 600; color: var(--primary-ink); }

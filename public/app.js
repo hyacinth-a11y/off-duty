@@ -158,16 +158,14 @@ function renderProjects(main) {
     </div>
     <div class="card">
       ${S.projects.length ? `<table><thead><tr>
-        <th>Project</th><th>Jira</th><th>Workspace</th><th>Type</th><th>Slack channels</th><th>Contacts</th><th></th>
+        <th>Project</th><th>Jira</th><th>Slack channels (channel · org space · label)</th><th>Contacts</th><th></th>
       </tr></thead><tbody>
       ${S.projects.map(p => `<tr>
         <td><strong>${esc(p.name)}</strong></td>
         <td class="mono">${esc(p.jira_name) || '—'}</td>
-        <td>${esc(wsName(p.workspace_id))}</td>
-        <td><span class="chip ${p.type}">${p.type}</span></td>
-        <td>${p.channels.length ? p.channels.map(c => `<span class="chip ${c.purpose}">#${esc(c.name)} · ${c.purpose}</span>`).join(' ') : ''}
-            ${p.notify_via_email && !p.channels.some(c => c.purpose === 'external') ? '<span class="chip email">Email (manual client notice)</span>' : ''}
-            ${!p.channels.length && !p.notify_via_email ? '<span class="muted small">none</span>' : ''}</td>
+        <td>${p.channels.length ? p.channels.map(c => `<div class="ch-line"><span class="hash">#${esc(c.name)}</span> <span class="muted">· ${esc(wsName(c.workspace_id))} ·</span> <span class="chip ${c.purpose}">${c.purpose}</span></div>`).join('') : ''}
+            ${p.notify_via_email && !p.channels.some(c => c.purpose === 'external') ? '<div class="ch-line"><span class="chip email">Email (manual client notice)</span></div>' : ''}
+            ${!p.channels.length && !p.notify_via_email ? '<span class="muted small">no channels yet</span>' : ''}</td>
         <td class="small">${p.contacts.map(esc).join(', ') || '—'}</td>
         <td><button class="btn-link" data-edit="${p.id}">Edit</button><button class="btn-danger" data-del="${p.id}">Delete</button></td>
       </tr>`).join('')}
@@ -200,11 +198,6 @@ function projectForm(p) {
       <label class="field"><span>Project name</span><input type="text" id="pName" value="${esc(p.name)}"></label>
       <label class="field"><span>Jira project name</span><input type="text" id="pJira" value="${esc(p.jira_name)}"></label>
     </div>
-    <div class="row">
-      <label class="field"><span>Org workspace</span><select id="pWs">${wsOpts(p.workspace_id)}</select></label>
-      <label class="field"><span>Internal or external?</span>
-        <select id="pType"><option value="internal" ${p.type === 'internal' ? 'selected' : ''}>Internal</option><option value="external" ${p.type === 'external' ? 'selected' : ''}>External (client-facing)</option></select></label>
-    </div>
     <label class="field"><span>Point of contacts (add as many as you need)</span>
       <div id="contacts">${(p.contacts.length ? p.contacts : ['']).map(contactRow).join('')}</div>
       <button type="button" class="btn-ghost" id="addContact">+ Add contact</button></label>
@@ -232,8 +225,6 @@ function projectForm(p) {
       const payload = {
         name: $('#pName', body).value.trim(),
         jira_name: $('#pJira', body).value.trim(),
-        workspace_id: +$('#pWs', body).value || null,
-        type: $('#pType', body).value,
         notify_via_email: $('#pEmail', body).checked,
         contacts: [...body.querySelectorAll('.contact')].map(i => i.value.trim()).filter(Boolean),
         channels: [...body.querySelectorAll('.channel-row')].map(r => ({
