@@ -1,0 +1,19 @@
+{
+  "name": "off-duty",
+  "version": "1.0.0",
+  "description": "Team time-off tracker with multi-workspace Slack notifications",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^5.2.1",
+    "pg": "^8.22.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
