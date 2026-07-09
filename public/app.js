@@ -167,7 +167,7 @@ function renderProjects(main) {
     </div>
     <div class="card">
       ${plist.length ? `<table><thead><tr>
-        <th>Project</th><th>Jira</th><th>Manager</th><th>Slack channels (channel · org space · label)</th><th>Contacts</th><th></th>
+        <th>Project</th><th>Jira</th><th>Manager</th><th>Slack channels (channel · org space · label)</th><th>Auto-send</th><th>Contacts</th><th></th>
       </tr></thead><tbody>
       ${plist.map(p => `<tr>
         <td><strong>${esc(p.name)}</strong></td>
@@ -176,6 +176,7 @@ function renderProjects(main) {
         <td>${p.channels.length ? p.channels.map(c => `<div class="ch-line"><span class="hash">#${esc(c.name)}</span> <span class="muted">· ${esc(wsName(c.workspace_id))} ·</span> <span class="chip ${c.purpose}">${c.purpose}</span></div>`).join('') : ''}
             ${p.notify_via_email && !p.channels.some(c => c.purpose === 'external') ? '<div class="ch-line"><span class="chip email">Email (manual client notice)</span></div>' : ''}
             ${!p.channels.length && !p.notify_via_email ? '<span class="muted small">no channels yet</span>' : ''}</td>
+        <td class="small">${p.auto_enabled && (p.auto_days || []).length ? esc(p.auto_days.map(d => DAYS[d].slice(0, 3)).join(', ')) + ' · ' + esc(p.auto_time || '09:00') : '—'}</td>
         <td class="small">${p.contacts.map(esc).join(', ') || '—'}</td>
         <td><button class="btn-link" data-edit="${p.id}">Edit</button><button class="btn-danger" data-del="${p.id}">Delete</button></td>
       </tr>`).join('')}
@@ -218,6 +219,13 @@ function projectForm(p) {
     <label class="field" style="display:flex;gap:8px;align-items:center">
       <input type="checkbox" id="pEmail" ${p.notify_via_email ? 'checked' : ''} style="width:auto">
       <span style="margin:0">No external Slack channel — mark as <strong>Email</strong> (I'll notify the client manually)</span></label>
+    <label class="field"><span>Automatic sending — on the chosen days at the chosen time (Philippine time), this project's notice goes to ALL its channels automatically. It skips silently when nobody is out and no holidays apply. You can always still press Send manually.</span>
+      <label style="display:flex;gap:8px;align-items:center;font-weight:600;color:var(--ink);margin:6px 0"><input type="checkbox" id="pAutoEnabled" ${p.auto_enabled ? 'checked' : ''} style="width:auto"> Enable schedule for this project</label>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;margin:4px 0 10px">
+        ${DAYS.map((d, i) => `<label style="display:flex;gap:5px;align-items:center;font-weight:400;color:var(--ink)"><input type="checkbox" class="pAutoDay" value="${i}" ${(p.auto_days || []).includes(i) ? 'checked' : ''} style="width:auto">${d}</label>`).join('')}
+      </div>
+      <div class="row"><label class="field" style="margin:0"><span>At this time</span><input type="time" id="pAutoTime" value="${esc(p.auto_time || '09:00')}"></label></div>
+    </label>
     <label class="field"><span>Team members on this project — from the Team Members section. This is the source of truth: it auto-fills projects on time-off entries and drives the holiday list.</span>
       <div id="pmSelect"></div></label>
     <div class="modal-actions"><button class="btn-ghost" id="mCancel">Cancel</button><button class="btn-primary" id="mSave">Save project</button></div>
@@ -237,6 +245,9 @@ function projectForm(p) {
         name: $('#pName', body).value.trim(),
         jira_name: $('#pJira', body).value.trim(),
         manager: $('#pManager', body).value.trim(),
+        auto_enabled: $('#pAutoEnabled', body).checked,
+        auto_days: [...body.querySelectorAll('.pAutoDay:checked')].map(i => +i.value),
+        auto_time: $('#pAutoTime', body).value || '09:00',
         notify_via_email: $('#pEmail', body).checked,
         contacts: [...body.querySelectorAll('.contact')].map(i => i.value.trim()).filter(Boolean),
         channels: [...body.querySelectorAll('.channel-row')].map(r => ({
@@ -491,7 +502,7 @@ async function renderProjectView(main) {
       } else {
         btn.textContent = 'Sent ✓'; btn.classList.add('btn-sent');
         const ls = btn.closest('summary').querySelector('.last-sent');
-        if (ls) ls.textContent = 'Last sent: ' + fmtDT(new Date().toISOString());
+        if (ls) ls.textContent = 'Last sent (manual): ' + fmtDT(new Date().toISOString());
         toast('Posted to Slack ✓');
       }
     } catch (err) { toast(err.message, true); btn.disabled = false; btn.textContent = 'Send'; }
@@ -513,7 +524,7 @@ function channelItem(it) {
       <strong>${esc(it.p.name)}</strong>
       <span class="hash">#${esc(ch.name)}</span>
       <span class="spacer"></span>
-      <span class="muted small last-sent">${ch.last_sent_at ? 'Last sent: ' + fmtDT(ch.last_sent_at) : 'Never sent yet'}</span>
+      <span class="muted small last-sent">${ch.last_sent_at ? (ch.last_sent_via === 'auto' ? '🤖 Sent automatically: ' : 'Last sent (manual): ') + fmtDT(ch.last_sent_at) : 'Never sent yet'}</span>
       <button class="btn-primary ch-send" data-pid="${it.p.id}" data-chid="${ch.id}">Send</button>
     </summary>
     <div class="pv-item-body">
