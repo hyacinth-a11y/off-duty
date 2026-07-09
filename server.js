@@ -69,6 +69,7 @@ app.post('/api/projects', (req, res) => {
   const p = {
     id: nextId(),
     jira_name: b.jira_name || '',
+    manager: b.manager || '',
     name: b.name,
     workspace_id: b.workspace_id || null,
     type: b.type === 'external' ? 'external' : 'internal',
@@ -85,6 +86,7 @@ app.put('/api/projects/:id', (req, res) => {
   const b = req.body;
   Object.assign(p, {
     jira_name: b.jira_name ?? p.jira_name,
+    manager: b.manager ?? p.manager ?? '',
     name: b.name ?? p.name,
     workspace_id: b.workspace_id !== undefined ? b.workspace_id : p.workspace_id,
     type: b.type ?? p.type,
@@ -237,7 +239,7 @@ app.all('/api/cron', async (req, res) => {
   if ((req.query.key || '') !== process.env.CRON_KEY) return res.status(403).json({ error: 'Wrong or missing key' });
   try {
     const { runDueSchedules } = require('./scheduler');
-    ok(res, await runDueSchedules(console.log));
+    ok(res, await runDueSchedules(console.log, req.query.dry === '1'));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -248,6 +250,9 @@ app.put('/api/settings', (req, res) => {
   if (b.timezone) s.timezone = b.timezone;
   if (b.internal_template !== undefined) s.internal_template = b.internal_template || DEFAULT_INTERNAL_TEMPLATE;
   if (b.external_template !== undefined) s.external_template = b.external_template || DEFAULT_EXTERNAL_TEMPLATE;
+  if (b.auto_enabled !== undefined) s.auto_enabled = !!b.auto_enabled;
+  if (Array.isArray(b.auto_days)) s.auto_days = b.auto_days.map(Number).filter(n => n >= 0 && n <= 6);
+  if (/^\d{2}:\d{2}$/.test(b.auto_time || '')) s.auto_time = b.auto_time;
   save(); ok(res);
 });
 
