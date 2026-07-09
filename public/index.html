@@ -6,7 +6,7 @@
 <title>Off Duty — team time-off & Slack notices</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,700&family=Instrument+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=17">
+<link rel="stylesheet" href="style.css?v=18">
 </head>
 <body>
 <header class="topbar">
@@ -15,8 +15,6 @@
     <span class="brand-mark">◐</span>
     <span class="brand-name">Off Duty</span>
   </div>
-  <div id="windowChip" class="window-chip" title="Time-off shown in notifications falls inside this window"></div>
-  <button id="themeToggle" class="theme-toggle" title="Toggle night mode">🌙</button>
 </header>
 
 <div class="layout">
@@ -29,6 +27,10 @@
       <button class="nav-item" data-sec="holidays">🎉 <span>Holidays</span></button>
       <button class="nav-item" data-sec="settings">⚙️ <span>Settings</span></button>
     </nav>
+    <div class="sidebar-footer">
+      <div id="windowChip" class="window-chip" title="Time-off shown in notifications falls inside this window"></div>
+      <button id="themeToggle" class="theme-toggle" title="Toggle light/dark mode">🌙 <span>Night mode</span></button>
+    </div>
   </aside>
   <main id="main"></main>
 </div>
@@ -36,6 +38,6 @@
 <dialog id="modal"><div id="modalBody"></div></dialog>
 <div id="toast" class="toast" hidden></div>
 
-<script src="app.js?v=17"></script>
+<script src="app.js?v=18"></script>
 </body>
 </html>

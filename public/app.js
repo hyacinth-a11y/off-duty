@@ -49,7 +49,7 @@ function multiSelect(mount, { options, selected = [], placeholder = 'Type a name
 // ---------------- night mode ----------------
 function applyTheme(t) {
   document.documentElement.dataset.theme = t;
-  const b = $('#themeToggle'); if (b) b.textContent = t === 'dark' ? '☀️' : '🌙';
+  const b = $('#themeToggle'); if (b) b.innerHTML = t === 'dark' ? '☀️ <span>Day mode</span>' : '🌙 <span>Night mode</span>';
 }
 let theme = localStorage.getItem('offduty-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
 applyTheme(theme);

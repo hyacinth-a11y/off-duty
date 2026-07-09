@@ -295,3 +295,11 @@ dialog::backdrop { background: rgba(23, 41, 59, 0.45); }
 .pv-item[open] > summary::before { transform: rotate(90deg); }
 .pv-item > summary::-webkit-details-marker { display: none; }
 .pv-item-body { padding: 0 14px 12px; }
+
+/* ---------- sidebar footer: notice window + theme toggle ---------- */
+.sidebar { display: flex; flex-direction: column; }
+.sidebar nav { flex: 1; }
+.sidebar-footer { display: flex; flex-direction: column; gap: 10px; padding: 12px 4px 4px; border-top: 1px solid var(--line); }
+.sidebar-footer .window-chip { margin: 0; white-space: normal; line-height: 1.5; text-align: center; }
+.sidebar-footer .theme-toggle { display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 14px; font-weight: 600; color: var(--ink-soft); padding: 9px 10px; }
+.sidebar-footer .theme-toggle:hover { color: var(--ink); }
