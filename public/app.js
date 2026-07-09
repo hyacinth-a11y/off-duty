@@ -160,11 +160,12 @@ function renderProjects(main) {
     </div>
     <div class="card">
       ${S.projects.length ? `<table><thead><tr>
-        <th>Project</th><th>Jira</th><th>Slack channels (channel · org space · label)</th><th>Contacts</th><th></th>
+        <th>Project</th><th>Jira</th><th>Manager</th><th>Slack channels (channel · org space · label)</th><th>Contacts</th><th></th>
       </tr></thead><tbody>
       ${[...S.projects].sort(byName).map(p => `<tr>
         <td><strong>${esc(p.name)}</strong></td>
         <td class="mono">${esc(p.jira_name) || '—'}</td>
+        <td>${esc(p.manager || '') || '—'}</td>
         <td>${p.channels.length ? p.channels.map(c => `<div class="ch-line"><span class="hash">#${esc(c.name)}</span> <span class="muted">· ${esc(wsName(c.workspace_id))} ·</span> <span class="chip ${c.purpose}">${c.purpose}</span></div>`).join('') : ''}
             ${p.notify_via_email && !p.channels.some(c => c.purpose === 'external') ? '<div class="ch-line"><span class="chip email">Email (manual client notice)</span></div>' : ''}
             ${!p.channels.length && !p.notify_via_email ? '<span class="muted small">no channels yet</span>' : ''}</td>
@@ -182,7 +183,7 @@ function renderProjects(main) {
 }
 
 function projectForm(p) {
-  p = p || { name: '', jira_name: '', workspace_id: null, type: 'external', notify_via_email: false, contacts: [], channels: [], member_ids: [] };
+  p = p || { name: '', jira_name: '', manager: '', notify_via_email: false, contacts: [], channels: [], member_ids: [] };
   const wsOpts = sel => `<option value="">— pick workspace —</option>` + S.workspaces.map(w => `<option value="${w.id}" ${w.id === sel ? 'selected' : ''}>${esc(w.name)}</option>`).join('');
   const contactRow = v => `<input type="text" class="contact" value="${esc(v)}" placeholder="Contact name" style="margin-bottom:6px">`;
   const channelRow = c => `<div class="channel-row" style="margin-bottom:12px;border:1px dashed var(--line);border-radius:8px;padding:8px">
@@ -200,6 +201,7 @@ function projectForm(p) {
       <label class="field"><span>Project name</span><input type="text" id="pName" value="${esc(p.name)}"></label>
       <label class="field"><span>Jira project name</span><input type="text" id="pJira" value="${esc(p.jira_name)}"></label>
     </div>
+    <label class="field"><span>Project manager</span><input type="text" id="pManager" value="${esc(p.manager || '')}"></label>
     <label class="field"><span>Point of contacts (add as many as you need)</span>
       <div id="contacts">${(p.contacts.length ? p.contacts : ['']).map(contactRow).join('')}</div>
       <button type="button" class="btn-ghost" id="addContact">+ Add contact</button></label>
@@ -227,6 +229,7 @@ function projectForm(p) {
       const payload = {
         name: $('#pName', body).value.trim(),
         jira_name: $('#pJira', body).value.trim(),
+        manager: $('#pManager', body).value.trim(),
         notify_via_email: $('#pEmail', body).checked,
         contacts: [...body.querySelectorAll('.contact')].map(i => i.value.trim()).filter(Boolean),
         channels: [...body.querySelectorAll('.channel-row')].map(r => ({
@@ -411,47 +414,58 @@ function renderTimeoff(main) {
   main.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => { await api('/timeoffs/' + b.dataset.del, 'DELETE'); await reload('Deleted'); });
 }
 
-/* ============================ PROJECT VIEW ============================ */
+/* ============================ SEND NOTIF ============================ */
 async function renderProjectView(main) {
   main.innerHTML = `<div class="section-head">
-      <h1>Project View</h1>
-      <p>Covers ${fmt(S.win.start)} → ${fmt(S.win.end)}. Only projects with approved time-off or members observing a holiday appear here.</p>
-    </div><div id="pvCards"><div class="empty">Loading…</div></div>`;
-  const wrap = $('#pvCards');
-  if (!S.projects.length) { wrap.innerHTML = '<div class="card"><div class="empty">No projects yet — add one in the Projects section.</div></div>'; return; }
+      <h1>Send Notif</h1>
+      <p>Covers ${fmt(S.win.start)} → ${fmt(S.win.end)}. Only projects with approved time-off or members observing a holiday appear.</p>
+    </div><div id="pvBody"><div class="empty">Loading…</div></div>`;
+  const body = $('#pvBody');
+  if (!S.projects.length) { body.innerHTML = '<div class="card"><div class="empty">No projects yet — add one in the Projects section.</div></div>'; return; }
 
   const reports  = await Promise.all(S.projects.map(p => api(`/projects/${p.id}/report`).catch(() => null)));
   const previews = await Promise.all(S.projects.map(p => api(`/projects/${p.id}/preview`).catch(() => null)));
 
-  // Only projects with something to announce
-  const active = S.projects
-    .map((p, i) => ({ p, rep: reports[i], prev: previews[i] }))
-    .sort((a, b) => byName(a.p, b.p))
-    .filter(x => x.rep && x.prev && (x.rep.ooo.length || x.rep.holidayGroups.length));
+  // Flatten to sendable items, each tagged with its workspace
+  const items = [];
+  S.projects.forEach((p, i) => {
+    const rep = reports[i], prev = previews[i];
+    if (!rep || !prev || (!rep.ooo.length && !rep.holidayGroups.length)) return;
+    for (const m of prev.messages) items.push({ kind: m.channel.purpose, wsId: m.channel.workspace_id || null, p, m });
+    if (prev.emailFallback) {
+      // an email notice "belongs" to the workspace of the project's channels, if any
+      const inferred = (p.channels.find(c => c.workspace_id) || {}).workspace_id || null;
+      items.push({ kind: 'email', wsId: inferred, p, text: prev.emailFallback });
+    }
+  });
+  if (!items.length) { body.innerHTML = '<div class="card"><div class="empty">Nobody is out and no holidays fall in this period — nothing to send. 🎉</div></div>'; return; }
 
-  const buildSection = purpose => {
-    const blocks = active.map(x => {
-      const chans = x.prev.messages.filter(m => m.channel.purpose === purpose);
-      const email = purpose === 'external' ? x.prev.emailFallback : null;
-      if (!chans.length && !email) return '';
-      return projectBlock(x, chans, email);
-    }).filter(Boolean);
-    return blocks.length ? blocks.join('') : `<div class="empty">No ${purpose} channels with updates this period.</div>`;
+  // Workspace tabs (only workspaces that actually have items)
+  const tabs = S.workspaces.filter(w => items.some(it => it.wsId === w.id)).map(w => ({ id: w.id, label: w.name }));
+  if (items.some(it => it.wsId === null)) tabs.push({ id: null, label: 'No workspace set' });
+  if (!tabs.find(t => t.id === S._pvWs) && S._pvWs !== null) S._pvWs = undefined;
+  const selected = S._pvWs !== undefined ? S._pvWs : tabs[0].id;
+  S._pvWs = selected;
+
+  const inWs = items.filter(it => it.wsId === selected);
+  const group = (title, kind, hint) => {
+    const rows = inWs.filter(it => it.kind === kind);
+    return `<details class="pv-group" open>
+      <summary>${title} <span class="muted small">— ${rows.length ? rows.length + ' to send' : hint}</span></summary>
+      <div class="pv-group-body">${rows.map(it => it.kind === 'email' ? emailItem(it) : channelItem(it)).join('') || `<div class="empty">Nothing here for this period.</div>`}</div>
+    </details>`;
   };
 
-  wrap.innerHTML = active.length ? `
-    <details class="pv-group" open>
-      <summary>Internal <span class="muted small">— your team's channels</span></summary>
-      <div class="pv-group-body">${buildSection('internal')}</div>
-    </details>
-    <details class="pv-group" open>
-      <summary>External <span class="muted small">— client-facing channels &amp; email</span></summary>
-      <div class="pv-group-body">${buildSection('external')}</div>
-    </details>`
-    : '<div class="card"><div class="empty">Nobody is out and no holidays fall in this period — nothing to announce. 🎉</div></div>';
+  body.innerHTML = `
+    <div class="ws-tabs">${tabs.map(t => `<button class="ws-tab ${t.id === selected ? 'active' : ''}" data-ws="${t.id === null ? 'null' : t.id}">${esc(t.label)}</button>`).join('')}</div>
+    ${group('Internal', 'internal', 'nothing to send')}
+    ${group('External', 'external', 'nothing to send')}
+    ${group('Emails', 'email', 'no email-only projects')}`;
 
-  wrap.querySelectorAll('.ch-send').forEach(btn => btn.onclick = async e => {
-    e.preventDefault();
+  body.querySelectorAll('.ws-tab').forEach(t => t.onclick = () => { S._pvWs = t.dataset.ws === 'null' ? null : +t.dataset.ws; renderProjectView(main); });
+
+  body.querySelectorAll('.ch-send').forEach(btn => btn.onclick = async e => {
+    e.preventDefault(); e.stopPropagation(); // don't toggle the row open/closed
     if (btn.disabled) return;
     btn.disabled = true; btn.textContent = 'Sending…';
     try {
@@ -462,54 +476,49 @@ async function renderProjectView(main) {
         btn.disabled = false; btn.textContent = 'Send';
       } else {
         btn.textContent = 'Sent ✓'; btn.classList.add('btn-sent');
-        const ls = btn.closest('.pv-head').querySelector('.last-sent');
+        const ls = btn.closest('summary').querySelector('.last-sent');
         if (ls) ls.textContent = 'Last sent: ' + fmtDT(new Date().toISOString());
         toast('Posted to Slack ✓');
       }
     } catch (err) { toast(err.message, true); btn.disabled = false; btn.textContent = 'Send'; }
   });
-  wrap.querySelectorAll('.email-copy').forEach(btn => btn.onclick = e => {
-    e.preventDefault();
-    const text = btn.closest('.pv-channel').querySelector('.slack-text').textContent;
+  body.querySelectorAll('.email-copy').forEach(btn => btn.onclick = e => {
+    e.preventDefault(); e.stopPropagation();
+    const text = btn.closest('details').querySelector('.slack-text').textContent;
     navigator.clipboard.writeText(text).then(
       () => { btn.textContent = 'Copied ✓'; toast('Email text copied — paste it into your email'); },
       () => toast('Copy failed — select the text manually', true));
   });
 }
 
-// One collapsible project: member cards (who + when + why) then channel previews with Send.
-function projectBlock(x, chans, email) {
-  const { p, rep } = x;
-  const holidayMembers = rep.holidayGroups.reduce((n, g) => n + g.members.length, 0);
-  const counts = [
-    rep.ooo.length ? `${rep.ooo.length} OOO` : '',
-    holidayMembers ? `${holidayMembers} on holiday` : '',
-  ].filter(Boolean).join(' · ');
-
-  const channelCards = chans.map(m => `<div class="pv-channel">
-      <div class="pv-head">
-        <span class="hash">#${esc(m.channel.name)}</span>
-        <span class="muted small">${m.channel.webhook_url ? 'via webhook' : esc(m.workspace || 'workspace not set')}</span>
-        <span class="spacer"></span>
-        <span class="muted small last-sent">${m.channel.last_sent_at ? 'Last sent: ' + fmtDT(m.channel.last_sent_at) : 'Never sent yet'}</span>
-        <button class="btn-primary ch-send" data-pid="${p.id}" data-chid="${m.channel.id}">Send</button>
-      </div>
+// Collapsed row: project · #channel · last sent · Send. Click anywhere else to open the preview.
+function channelItem(it) {
+  const ch = it.m.channel;
+  return `<details class="pv-item">
+    <summary>
+      <strong>${esc(it.p.name)}</strong>
+      <span class="hash">#${esc(ch.name)}</span>
+      <span class="spacer"></span>
+      <span class="muted small last-sent">${ch.last_sent_at ? 'Last sent: ' + fmtDT(ch.last_sent_at) : 'Never sent yet'}</span>
+      <button class="btn-primary ch-send" data-pid="${it.p.id}" data-chid="${ch.id}">Send</button>
+    </summary>
+    <div class="pv-item-body">
       <div class="slack-msg"><div class="slack-msg-body"><div class="slack-avatar">OD</div>
-        <div class="slack-text"><span class="bot-name">Off Duty</span><span class="bot-tag">APP</span>\n${esc(m.text)}</div></div></div>
-    </div>`).join('')
-    + (email ? `<div class="pv-channel">
-      <div class="pv-head">
-        <span class="chip email">Email — send to the client manually</span>
-        <span class="spacer"></span>
-        <button class="btn-ghost email-copy">Copy text</button>
-      </div>
-      <div class="slack-msg"><div class="slack-msg-body"><div class="slack-text">${esc(email)}</div></div></div>
-    </div>` : '');
+        <div class="slack-text"><span class="bot-name">Off Duty</span><span class="bot-tag">APP</span>\n${esc(it.m.text)}</div></div></div>
+    </div>
+  </details>`;
+}
 
-  return `<details class="pv-project" open>
-    <summary><strong>${esc(p.name)}</strong> <span class="muted small">${counts}</span></summary>
-    <div class="pv-project-body">
-      ${channelCards}
+function emailItem(it) {
+  return `<details class="pv-item">
+    <summary>
+      <strong>${esc(it.p.name)}</strong>
+      <span class="chip email">Email</span>
+      <span class="spacer"></span>
+      <button class="btn-ghost email-copy">Copy text</button>
+    </summary>
+    <div class="pv-item-body">
+      <div class="slack-msg"><div class="slack-msg-body"><div class="slack-text">${esc(it.text)}</div></div></div>
     </div>
   </details>`;
 }
@@ -569,10 +578,19 @@ const SECTIONS = { projects: renderProjects, members: renderMembers, holidays: r
 let current = 'projectview';
 async function show(section) {
   current = section;
-  $('#sectionSelect').value = section;
+  document.querySelectorAll('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.sec === section));
+  if (window.innerWidth <= 720) $('#sidebar').classList.add('collapsed'); // auto-close overlay on phones
   await SECTIONS[section]($('#main'));
 }
 async function reload(msg) { await refresh(); await show(current); if (msg) toast(msg); }
-$('#sectionSelect').onchange = e => show(e.target.value);
+document.querySelectorAll('.nav-item').forEach(b => b.onclick = () => show(b.dataset.sec));
+
+// collapsible sidebar (state remembered)
+const sidebar = $('#sidebar');
+if (localStorage.getItem('offduty-sidebar') === 'collapsed') sidebar.classList.add('collapsed');
+$('#navToggle').onclick = () => {
+  sidebar.classList.toggle('collapsed');
+  localStorage.setItem('offduty-sidebar', sidebar.classList.contains('collapsed') ? 'collapsed' : 'open');
+};
 
 (async () => { await refresh(); await show(location.hash.replace('#', '') in SECTIONS ? location.hash.replace('#', '') : 'projectview'); })();

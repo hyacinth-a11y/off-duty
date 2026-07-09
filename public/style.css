@@ -249,3 +249,49 @@ dialog::backdrop { background: rgba(23, 41, 59, 0.45); }
 
 .pv-channel { margin-top: 10px; }
 .pv-channel .pv-head { margin-bottom: 6px; }
+
+/* ---------- sidebar layout ---------- */
+.nav-toggle { background: transparent; border: 1.5px solid var(--line); border-radius: 8px; padding: 5px 11px; font-size: 16px; cursor: pointer; color: var(--ink); }
+.nav-toggle:hover { border-color: var(--primary); }
+.topbar .window-chip { margin-left: auto; }
+.layout { display: flex; align-items: flex-start; }
+.sidebar {
+  width: 212px; flex: 0 0 212px; background: var(--surface);
+  border-right: 1px solid var(--line);
+  position: sticky; top: 57px; height: calc(100vh - 57px);
+  overflow: auto; padding: 14px 10px;
+  transition: margin-left 0.18s ease;
+}
+.sidebar.collapsed { margin-left: -212px; }
+.sidebar nav { display: flex; flex-direction: column; gap: 3px; }
+.nav-item {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  background: transparent; border: none; text-align: left;
+  padding: 10px 12px; border-radius: 8px; font-size: 14.5px; font-weight: 600;
+  color: var(--ink-soft); cursor: pointer;
+}
+.nav-item:hover { background: var(--hover-bg); color: var(--ink); }
+.nav-item.active { background: var(--chip-sel-bg); color: var(--primary-ink); }
+.layout main { flex: 1; min-width: 0; }
+@media (max-width: 720px) {
+  .sidebar { position: fixed; left: 0; z-index: 20; box-shadow: 8px 0 24px rgba(0,0,0,0.15); }
+}
+
+/* ---------- Send Notif: workspace tabs + collapsed rows ---------- */
+.ws-tabs { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+.ws-tab {
+  border: 1.5px solid var(--line); background: var(--surface); color: var(--ink-soft);
+  border-radius: 999px; padding: 7px 16px; font-size: 14px; font-weight: 600; cursor: pointer;
+}
+.ws-tab.active { background: var(--primary); border-color: var(--primary); color: #fff; }
+.ws-tab:hover:not(.active) { border-color: var(--primary); color: var(--primary-ink); }
+
+.pv-item { border: 1px solid var(--line); border-radius: 9px; margin-bottom: 8px; background: var(--surface); }
+.pv-item > summary {
+  cursor: pointer; list-style: none; padding: 10px 14px;
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; user-select: none;
+}
+.pv-item > summary::before { content: "▸"; font-size: 11px; color: var(--ink-soft); transition: transform 0.15s; flex-shrink: 0; }
+.pv-item[open] > summary::before { transform: rotate(90deg); }
+.pv-item > summary::-webkit-details-marker { display: none; }
+.pv-item-body { padding: 0 14px 12px; }

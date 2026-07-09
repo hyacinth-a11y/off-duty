@@ -6,34 +6,36 @@
 <title>Off Duty — team time-off & Slack notices</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,700&family=Instrument+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=16">
+<link rel="stylesheet" href="style.css?v=17">
 </head>
 <body>
 <header class="topbar">
+  <button id="navToggle" class="nav-toggle" title="Show/hide menu">☰</button>
   <div class="brand">
     <span class="brand-mark">◐</span>
     <span class="brand-name">Off Duty</span>
   </div>
-  <nav class="nav">
-    <label class="nav-label" for="sectionSelect">Section</label>
-    <select id="sectionSelect" class="nav-select">
-      <option value="projectview">Project View — Slack notices</option>
-      <option value="timeoff">Time-Off Entries</option>
-      <option value="projects">Projects</option>
-      <option value="members">Team Members</option>
-      <option value="holidays">Holidays</option>
-      <option value="settings">Settings</option>
-    </select>
-  </nav>
   <div id="windowChip" class="window-chip" title="Time-off shown in notifications falls inside this window"></div>
   <button id="themeToggle" class="theme-toggle" title="Toggle night mode">🌙</button>
 </header>
 
-<main id="main"></main>
+<div class="layout">
+  <aside id="sidebar" class="sidebar">
+    <nav>
+      <button class="nav-item" data-sec="projectview">📣 <span>Send Notif</span></button>
+      <button class="nav-item" data-sec="timeoff">🗓️ <span>Time-Off Entries</span></button>
+      <button class="nav-item" data-sec="projects">📁 <span>Projects</span></button>
+      <button class="nav-item" data-sec="members">👥 <span>Team Members</span></button>
+      <button class="nav-item" data-sec="holidays">🎉 <span>Holidays</span></button>
+      <button class="nav-item" data-sec="settings">⚙️ <span>Settings</span></button>
+    </nav>
+  </aside>
+  <main id="main"></main>
+</div>
 
 <dialog id="modal"><div id="modalBody"></div></dialog>
 <div id="toast" class="toast" hidden></div>
 
-<script src="app.js?v=16"></script>
+<script src="app.js?v=17"></script>
 </body>
 </html>
