@@ -55,6 +55,11 @@ let theme = localStorage.getItem('offduty-theme') || (matchMedia('(prefers-color
 applyTheme(theme);
 $('#themeToggle').onclick = () => { theme = theme === 'dark' ? 'light' : 'dark'; localStorage.setItem('offduty-theme', theme); applyTheme(theme); };
 
+// ---------------- search ----------------
+const Q = () => (S._q || '').trim().toLowerCase();
+const hit = (...vals) => !Q() || vals.some(v => String(v || '').toLowerCase().includes(Q()));
+const noMatch = fallback => Q() ? `No matches for "${esc(S._q.trim())}".` : fallback;
+
 async function api(path, method = 'GET', body) {
   const r = await fetch('/api' + path, {
     method, headers: { 'Content-Type': 'application/json' },
@@ -68,6 +73,7 @@ async function api(path, method = 'GET', body) {
 async function refresh() {
   [S.workspaces, S.projects, S.members, S.holidays, S.timeoffs, S.schedules, S.settings, S.win] =
     await Promise.all(['/workspaces', '/projects', '/members', '/holidays', '/timeoffs', '/schedules', '/settings', '/window'].map(p => api(p)));
+  S._pvData = null; // invalidate Send Notif cache on data refresh
   $('#windowChip').textContent = `Notice window: ${fmt(S.win.start)} → ${fmt(S.win.end)}`;
 }
 
@@ -152,6 +158,7 @@ const dateVal = txt => parseDate(txt.value) || txt.dataset.iso || '';
 
 /* ============================ PROJECTS ============================ */
 function renderProjects(main) {
+  const plist = [...S.projects].sort(byName).filter(p => hit(p.name, p.jira_name, p.manager, (p.contacts || []).join(' '), (p.channels || []).map(c => c.name).join(' ')));
   main.innerHTML = `
     <div class="section-head">
       <h1>Projects</h1><p>Source of truth for every project, its contacts, and its Slack channels.</p>
@@ -159,10 +166,10 @@ function renderProjects(main) {
       <button class="btn-primary" id="addProject">Add project</button>
     </div>
     <div class="card">
-      ${S.projects.length ? `<table><thead><tr>
+      ${plist.length ? `<table><thead><tr>
         <th>Project</th><th>Jira</th><th>Manager</th><th>Slack channels (channel · org space · label)</th><th>Contacts</th><th></th>
       </tr></thead><tbody>
-      ${[...S.projects].sort(byName).map(p => `<tr>
+      ${plist.map(p => `<tr>
         <td><strong>${esc(p.name)}</strong></td>
         <td class="mono">${esc(p.jira_name) || '—'}</td>
         <td>${esc(p.manager || '') || '—'}</td>
@@ -172,7 +179,7 @@ function renderProjects(main) {
         <td class="small">${p.contacts.map(esc).join(', ') || '—'}</td>
         <td><button class="btn-link" data-edit="${p.id}">Edit</button><button class="btn-danger" data-del="${p.id}">Delete</button></td>
       </tr>`).join('')}
-      </tbody></table>` : `<div class="empty">No projects yet. Add your first project to start building notices.</div>`}
+      </tbody></table>` : `<div class="empty">${noMatch('No projects yet. Add your first project to start building notices.')}</div>`}
     </div>`;
   $('#addProject').onclick = () => projectForm();
   main.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => projectForm(S.projects.find(p => p.id === +b.dataset.edit)));
@@ -250,18 +257,19 @@ function projectForm(p) {
 
 /* ============================ MEMBERS ============================ */
 function renderMembers(main) {
+  const mlist = [...S.members].sort(byName).filter(m => hit(m.name, m.status));
   main.innerHTML = `
     <div class="section-head">
       <h1>Team Members</h1><p>Source of truth for everyone in the company. Add people here before logging their time off.</p>
       <span class="spacer"></span><button class="btn-primary" id="addMember">Add member</button>
     </div>
     <div class="card">
-      ${S.members.length ? `<table><thead><tr><th>Name</th><th>Employment status</th><th>Holidays that apply</th><th></th></tr></thead><tbody>
-      ${S.members.map(m => `<tr>
+      ${mlist.length ? `<table><thead><tr><th>Name</th><th>Employment status</th><th>Holidays that apply</th><th></th></tr></thead><tbody>
+      ${mlist.map(m => `<tr>
         <td><strong>${esc(m.name)}</strong></td><td>${esc(m.status)}</td>
         <td class="small muted">${m.status === 'PH Employee' ? 'PH holidays' : m.status === 'US Employee' ? 'US holidays' : 'None (contractor)'}</td>
         <td><button class="btn-link" data-edit="${m.id}">Edit</button><button class="btn-danger" data-del="${m.id}">Delete</button></td>
-      </tr>`).join('')}</tbody></table>` : `<div class="empty">No team members yet.</div>`}
+      </tr>`).join('')}</tbody></table>` : `<div class="empty">${noMatch('No team members yet.')}</div>`}
     </div>`;
   const form = m => openModal(`
     <h2>${m.id ? 'Edit member' : 'Add member'}</h2>
@@ -291,7 +299,7 @@ function renderHolidays(main) {
   const years = [...new Set(S.holidays.map(h => h.date.slice(0, 4)))].sort();
   const year = S._holidayYear || years[years.length - 1] || String(new Date().getFullYear());
   S._holidayYear = year;
-  const list = S.holidays.filter(h => h.date.startsWith(year)).sort((a, b) => a.date.localeCompare(b.date));
+  const list = S.holidays.filter(h => h.date.startsWith(year) && hit(h.name)).sort((a, b) => a.date.localeCompare(b.date));
   const block = loc => {
     const rows = list.filter(h => h.location === loc);
     return `<div class="card"><h2>${loc === 'PH' ? '🇵🇭 Philippine holidays' : '🇺🇸 US holidays'} · ${esc(year)}</h2>
@@ -337,7 +345,7 @@ function renderHolidays(main) {
 /* ============================ TIME OFF ============================ */
 function renderTimeoff(main) {
   const sortMode = S._toSort || 'date';
-  const rows = [...S.timeoffs].sort(sortMode === 'name'
+  const rows = S.timeoffs.filter(t => hit(memberName(t.member_id), t.project_ids.map(projectName).join(' '))).sort(sortMode === 'name'
     ? (a, b) => memberName(a.member_id).localeCompare(memberName(b.member_id), undefined, { sensitivity: 'base' }) || a.start_date.localeCompare(b.start_date)
     : (a, b) => a.start_date.localeCompare(b.start_date) || memberName(a.member_id).localeCompare(memberName(b.member_id)));
   main.innerHTML = `
@@ -360,7 +368,7 @@ function renderTimeoff(main) {
         <td><span class="badge ${t.status}">${t.status === 'approved' ? 'Approved' : 'Pending approval'}</span></td>
         <td class="small muted">${esc(t.note) || ''}</td>
         <td><button class="btn-link" data-edit="${t.id}">Edit</button><button class="btn-danger" data-del="${t.id}">Delete</button></td>
-      </tr>`).join('')}</tbody></table>` : `<div class="empty">No time-off entries yet. Only <strong>approved</strong> entries appear in Slack notices.</div>`}
+      </tr>`).join('')}</tbody></table>` : `<div class="empty">${noMatch('No time-off entries yet. Only <strong>approved</strong> entries appear in Slack notices.')}</div>`}
     </div>
     <p class="muted small">Heads-up: only entries marked <strong>Approved</strong> are included in Slack notifications. If someone isn't in the member dropdown, add them under Team Members first.</p>`;
   const form = t => {
@@ -423,14 +431,20 @@ async function renderProjectView(main) {
   const body = $('#pvBody');
   if (!S.projects.length) { body.innerHTML = '<div class="card"><div class="empty">No projects yet — add one in the Projects section.</div></div>'; return; }
 
-  const reports  = await Promise.all(S.projects.map(p => api(`/projects/${p.id}/report`).catch(() => null)));
-  const previews = await Promise.all(S.projects.map(p => api(`/projects/${p.id}/preview`).catch(() => null)));
+  if (!S._pvData) {
+    S._pvData = {
+      reports:  await Promise.all(S.projects.map(p => api(`/projects/${p.id}/report`).catch(() => null))),
+      previews: await Promise.all(S.projects.map(p => api(`/projects/${p.id}/preview`).catch(() => null))),
+    };
+  }
+  const { reports, previews } = S._pvData;
 
   // Flatten to sendable items, each tagged with its workspace
   const items = [];
   S.projects.forEach((p, i) => {
     const rep = reports[i], prev = previews[i];
     if (!rep || !prev || (!rep.ooo.length && !rep.holidayGroups.length)) return;
+    if (!hit(p.name, (p.channels || []).map(c => c.name).join(' '))) return;
     for (const m of prev.messages) items.push({ kind: m.channel.purpose, wsId: m.channel.workspace_id || null, p, m });
     if (prev.emailFallback) {
       // an email notice "belongs" to the workspace of the project's channels, if any
@@ -438,7 +452,7 @@ async function renderProjectView(main) {
       items.push({ kind: 'email', wsId: inferred, p, text: prev.emailFallback });
     }
   });
-  if (!items.length) { body.innerHTML = '<div class="card"><div class="empty">Nobody is out and no holidays fall in this period — nothing to send. 🎉</div></div>'; return; }
+  if (!items.length) { body.innerHTML = `<div class="card"><div class="empty">${noMatch('Nobody is out and no holidays fall in this period — nothing to send. 🎉')}</div></div>`; return; }
 
   // Workspace tabs (only workspaces that actually have items)
   const tabs = S.workspaces.filter(w => items.some(it => it.wsId === w.id)).map(w => ({ id: w.id, label: w.name }));
@@ -584,6 +598,14 @@ async function show(section) {
 }
 async function reload(msg) { await refresh(); await show(current); if (msg) toast(msg); }
 document.querySelectorAll('.nav-item').forEach(b => b.onclick = () => show(b.dataset.sec));
+
+// live search: filters whichever section is open
+let _qTimer;
+$('#globalSearch').oninput = e => {
+  S._q = e.target.value;
+  clearTimeout(_qTimer);
+  _qTimer = setTimeout(() => show(current), 250);
+};
 
 // collapsible sidebar (state remembered)
 const sidebar = $('#sidebar');

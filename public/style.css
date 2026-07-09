@@ -303,3 +303,12 @@ dialog::backdrop { background: rgba(23, 41, 59, 0.45); }
 .sidebar-footer .window-chip { margin: 0; white-space: normal; line-height: 1.5; text-align: center; }
 .sidebar-footer .theme-toggle { display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 14px; font-weight: 600; color: var(--ink-soft); padding: 9px 10px; }
 .sidebar-footer .theme-toggle:hover { color: var(--ink); }
+
+/* ---------- global search ---------- */
+.global-search {
+  width: min(320px, 40vw); margin-left: 14px;
+  font-family: var(--font-body); font-size: 14px; color: var(--ink);
+  padding: 8px 12px; border: 1.5px solid var(--line); border-radius: 999px; background: var(--input-bg);
+}
+.global-search:focus { outline: 2px solid var(--primary); outline-offset: 1px; }
+[data-theme="dark"] .global-search { background: var(--input-bg); color: var(--ink); border-color: var(--line); }
