@@ -75,6 +75,10 @@ app.post('/api/projects', (req, res) => {
     type: b.type === 'external' ? 'external' : 'internal',
     notify_via_email: !!b.notify_via_email,
     contacts: (b.contacts || []).filter(Boolean),
+    auto_enabled: !!b.auto_enabled,
+    auto_days: Array.isArray(b.auto_days) ? b.auto_days.map(Number).filter(n => n >= 0 && n <= 6) : [],
+    auto_time: /^\d{2}:\d{2}$/.test(b.auto_time || '') ? b.auto_time : '09:00',
+    auto_last_sent: null,
     channels: (b.channels || []).filter(c => c.name || c.webhook_url).map(c => ({ id: nextId(), name: c.name || 'via-webhook', workspace_id: c.workspace_id || null, purpose: c.purpose === 'external' ? 'external' : 'internal', webhook_url: c.webhook_url || '' })),
     member_ids: b.member_ids || [],
   };
@@ -93,6 +97,9 @@ app.put('/api/projects/:id', (req, res) => {
     notify_via_email: b.notify_via_email !== undefined ? !!b.notify_via_email : p.notify_via_email,
     contacts: b.contacts ?? p.contacts,
     member_ids: b.member_ids ?? p.member_ids,
+    auto_enabled: b.auto_enabled !== undefined ? !!b.auto_enabled : !!p.auto_enabled,
+    auto_days: Array.isArray(b.auto_days) ? b.auto_days.map(Number).filter(n => n >= 0 && n <= 6) : (p.auto_days || []),
+    auto_time: /^\d{2}:\d{2}$/.test(b.auto_time || '') ? b.auto_time : (p.auto_time || '09:00'),
   });
   if (b.channels) p.channels = b.channels.filter(c => c.name || c.webhook_url).map(c => ({ id: c.id || nextId(), name: c.name || 'via-webhook', workspace_id: c.workspace_id || null, purpose: c.purpose === 'external' ? 'external' : 'internal', webhook_url: c.webhook_url || '' }));
   syncTimeoffsWithRoster(p);

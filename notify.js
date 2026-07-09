@@ -266,7 +266,7 @@ async function postWebhook(url, text) {
   throw new Error(map[body.trim()] || `webhook error: ${body.trim() || res.status}`);
 }
 
-async function sendProjectNotifications(projectId, now = new Date(), channelId = null) {
+async function sendProjectNotifications(projectId, now = new Date(), channelId = null, via = 'manual') {
   const built = buildMessages(projectId, now);
   if (!built) return { ok: false, error: 'Project not found' };
   const targets = channelId ? built.messages.filter(m => m.channel.id === channelId) : built.messages;
@@ -281,7 +281,7 @@ async function sendProjectNotifications(projectId, now = new Date(), channelId =
     if (m.channel.webhook_url) {
       try {
         await postWebhook(m.channel.webhook_url, text);
-        m.channel.last_sent_at = new Date().toISOString(); save();
+        m.channel.last_sent_at = new Date().toISOString(); m.channel.last_sent_via = via; save();
         results.push({ channel: m.channel.name, via: 'webhook', ok: true, error: null });
       } catch (e) {
         results.push({ channel: m.channel.name, via: 'webhook', ok: false, error: e.message });
@@ -294,7 +294,7 @@ async function sendProjectNotifications(projectId, now = new Date(), channelId =
     }
     try {
       await postToChannel(m.workspace.bot_token, m.channel, text);
-      m.channel.last_sent_at = new Date().toISOString(); save();
+      m.channel.last_sent_at = new Date().toISOString(); m.channel.last_sent_via = via; save();
       results.push({ channel: m.channel.name, workspace: m.workspace.name, ok: true, error: null });
     } catch (e) {
       results.push({ channel: m.channel.name, workspace: m.workspace.name, ok: false, error: e.message });
