@@ -442,8 +442,13 @@ async function renderProjectView(main) {
   const body = $('#pvBody');
   if (!S.projects.length) { body.innerHTML = '<div class="card"><div class="empty">No projects yet — add one in the Projects section.</div></div>'; return; }
 
-  if (!S._pvData) {
+  // Refetch when opening the section (auto-sends update timestamps server-side while
+  // you're away); the 45s cache only exists so search typing stays fast.
+  const fresh = S._pvData && (Date.now() - S._pvData.at < 45000);
+  if (!fresh) {
+    S.projects = await api('/projects'); // channels carry last_sent_at / last_sent_via
     S._pvData = {
+      at: Date.now(),
       reports:  await Promise.all(S.projects.map(p => api(`/projects/${p.id}/report`).catch(() => null))),
       previews: await Promise.all(S.projects.map(p => api(`/projects/${p.id}/preview`).catch(() => null))),
     };
