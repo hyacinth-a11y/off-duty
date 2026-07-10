@@ -50,7 +50,9 @@ async function runDueSchedules(log = () => {}, dry = false) {
 
     log(`[auto-send] ${p.name}: sending to ${p.channels.length} channel(s)`);
     const r = await sendProjectNotifications(p.id, new Date(), null, 'auto');
-    const anyOk = (r.results || []).some(x => x.ok);
+    // Count only real Slack deliveries — the informational "(email — send manually)"
+    // line must not mask a failed channel send, or email-marked projects never retry.
+    const anyOk = (r.results || []).some(x => x.ok && !x.skipped);
     if (anyOk) { p.auto_last_sent = today; save(); }
     line.note = anyOk ? 'sent' : 'all channels failed — will retry on next ping';
     line.results = r.results;
