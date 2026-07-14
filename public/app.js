@@ -176,6 +176,7 @@ function renderProjects(main) {
     <div class="section-head">
       <h1>Projects</h1><p>Source of truth for every project, its contacts, and its Slack channels. Search a member's name to see their projects.</p>
       <span class="spacer"></span>
+      <button class="btn-ghost" id="jiraSync" title="Import new onboarding tickets from Jira">↧ Sync from Jira</button>
       <button class="btn-primary" id="addProject">Add project</button>
     </div>
     <div class="card">
@@ -196,6 +197,28 @@ function renderProjects(main) {
       </tbody></table></div>` : `<div class="empty">${noMatch('No projects yet. Add your first project to start building notices.')}</div>`}
     </div>`;
   $('#addProject').onclick = () => projectForm();
+  $('#jiraSync').onclick = async () => {
+    const btn = $('#jiraSync'); if (btn.disabled) return;
+    btn.disabled = true; btn.textContent = 'Checking Jira…';
+    try {
+      const status = await api('/jira/status');
+      if (!status.configured) {
+        toast('Jira isn\u2019t connected yet — add the Jira settings in Render first (ask Claude for the steps)', true);
+        btn.disabled = false; btn.textContent = '↧ Sync from Jira'; return;
+      }
+      const preview = await api('/jira/sync?dry=1', 'POST');
+      if (!preview.ok) { toast(preview.error, true); btn.disabled = false; btn.textContent = '↧ Sync from Jira'; return; }
+      if (!preview.would_import) { toast('No new Jira tickets to import — you\u2019re all caught up ✓'); btn.disabled = false; btn.textContent = '↧ Sync from Jira'; return; }
+      const list = preview.created.map(c => `• ${c.key} — ${c.name}`).join('\n');
+      if (!confirm(`Import ${preview.would_import} new project(s) from Jira?\n\n${list}\n\nYou can fill in Slack channels and members afterward.`)) {
+        btn.disabled = false; btn.textContent = '↧ Sync from Jira'; return;
+      }
+      btn.textContent = 'Importing…';
+      const r = await api('/jira/sync', 'POST');
+      if (r.ok) { await reload(`Imported ${r.imported} project(s) from Jira ✓`); }
+      else { toast(r.error, true); btn.disabled = false; btn.textContent = '↧ Sync from Jira'; }
+    } catch (e) { toast(e.message, true); btn.disabled = false; btn.textContent = '↧ Sync from Jira'; }
+  };
   main.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => projectForm(S.projects.find(p => p.id === +b.dataset.edit)));
   main.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
     if (!confirm('Delete this project? Its schedules and time-off links will be removed too.')) return;
@@ -572,7 +595,12 @@ function emailItem(it) {
 /* ============================ SETTINGS ============================ */
 function renderSettings(main) {
   main.innerHTML = `
-    <div class="section-head"><h1>Settings</h1><p>Slack workspaces, notification templates, and the scheduler timezone.</p></div>
+    <div class="section-head"><h1>Settings</h1><p>Slack workspaces, Jira, notification templates, and the scheduler timezone.</p></div>
+
+    <div class="card"><h2>Jira connection</h2>
+      <div id="jiraStatus" class="muted small">Checking…</div>
+      <p class="muted small" style="margin-top:8px">Connects to your onboarding project so <strong>Sync from Jira</strong> (in the Projects section) can import new tickets as projects. Set up on the server with <span class="mono">JIRA_BASE_URL</span>, <span class="mono">JIRA_EMAIL</span>, and <span class="mono">JIRA_TOKEN</span> (get a token at id.atlassian.com → Security → API tokens).</p>
+    </div>
 
     <div class="card"><h2>Slack workspaces</h2>
       <p class="muted small">Each Slack org (e.g. nClouds, AppEvolve) needs its own bot token. Create a Slack app in that workspace with the <span class="mono">chat:write</span> + <span class="mono">channels:read</span> scopes, install it, invite the bot to your channels with <span class="mono">/invite</span>, then paste its <span class="mono">xoxb-…</span> token here.</p>
@@ -608,6 +636,12 @@ function renderSettings(main) {
       } catch (e) { toast(e.message, true); }
     });
   });
+  api('/jira/status').then(s => {
+    const el = $('#jiraStatus');
+    if (el) el.innerHTML = s.configured
+      ? '<span class="badge approved">✓ Connected</span> Jira is set up — the Sync button in Projects is ready to use.'
+      : '<span class="badge pending">Not connected</span> Add the Jira environment variables on the server to enable syncing.';
+  }).catch(() => { const el = $('#jiraStatus'); if (el) el.textContent = 'Could not check Jira status.'; });
   $('#addWs').onclick = () => wsForm({});
   main.querySelectorAll('[data-wedit]').forEach(b => b.onclick = () => wsForm(S.workspaces.find(w => w.id === +b.dataset.wedit)));
   main.querySelectorAll('[data-wdel]').forEach(b => b.onclick = async () => { await api('/workspaces/' + b.dataset.wdel, 'DELETE'); await reload('Deleted'); });
