@@ -320,7 +320,9 @@ dialog::backdrop { background: rgba(23, 41, 59, 0.45); }
 
 /* ---------- Projects table: never let it crush its own columns ---------- */
 .table-scroll { overflow-x: auto; }
-.table-scroll table { min-width: 760px; }
+/* No forced min-width — let the table use the available width; it only scrolls
+   on genuinely narrow screens where content can't otherwise fit. */
+@media (max-width: 640px) { .table-scroll table { min-width: 560px; } }
 
 /* ---------- Projects table: use full width, sensible column widths ---------- */
 .projects-table { width: 100%; table-layout: auto; }
