@@ -269,6 +269,13 @@ app.all('/api/cron', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ---------------- Jira sync ----------------
+const { syncFromJira, isConfigured: jiraConfigured } = require('./jira');
+app.get('/api/jira/status', (req, res) => ok(res, { configured: jiraConfigured() }));
+app.post('/api/jira/sync', async (req, res) => {
+  ok(res, await syncFromJira(req.query.dry === '1'));
+});
+
 // ---------------- settings ----------------
 app.get('/api/settings', (req, res) => ok(res, db().settings));
 app.put('/api/settings', (req, res) => {
