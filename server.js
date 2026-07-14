@@ -68,6 +68,7 @@ app.post('/api/projects', (req, res) => {
   if (!b.name) return res.status(400).json({ error: 'Project name is required' });
   const p = {
     id: nextId(),
+    created_at: new Date().toISOString(),
     jira_name: b.jira_name || '',
     manager: b.manager || '',
     name: b.name,
@@ -101,7 +102,25 @@ app.put('/api/projects/:id', (req, res) => {
     auto_days: Array.isArray(b.auto_days) ? b.auto_days.map(Number).filter(n => n >= 0 && n <= 6) : (p.auto_days || []),
     auto_time: /^\d{2}:\d{2}$/.test(b.auto_time || '') ? b.auto_time : (p.auto_time || '09:00'),
   });
-  if (b.channels) p.channels = b.channels.filter(c => c.name || c.webhook_url).map(c => ({ id: c.id || nextId(), name: c.name || 'via-webhook', workspace_id: c.workspace_id || null, purpose: c.purpose === 'external' ? 'external' : 'internal', webhook_url: c.webhook_url || '' }));
+  if (b.channels) {
+    const prevById = Object.fromEntries((p.channels || []).map(c => [c.id, c]));
+    p.channels = b.channels.filter(c => c.name || c.webhook_url).map(c => {
+      const prev = (c.id && prevById[c.id]) || {};
+      const name = c.name || 'via-webhook';
+      return {
+        id: c.id || nextId(),
+        name,
+        workspace_id: c.workspace_id || null,
+        purpose: c.purpose === 'external' ? 'external' : 'internal',
+        webhook_url: c.webhook_url || '',
+        // keep send history across edits
+        last_sent_at: prev.last_sent_at || null,
+        last_sent_via: prev.last_sent_via || null,
+        // keep the cached Slack channel ID only if the channel name didn't change
+        resolved_id: prev.name === name ? (prev.resolved_id || null) : null,
+      };
+    });
+  }
   syncTimeoffsWithRoster(p);
   save(); ok(res);
 });
