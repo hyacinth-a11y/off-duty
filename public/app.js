@@ -34,13 +34,20 @@ function multiSelect(mount, { options, selected = [], placeholder = 'Type a name
       ? items.map(o => `<div class="ms-item" data-id="${o.id}">＋ ${esc(o.label)}${o.sub ? ` <span class="muted small">· ${esc(o.sub)}</span>` : ''}</div>`).join('')
       : `<div class="ms-empty">${options.length ? 'No matches (or already added)' : 'Nothing to pick yet'}</div>`;
     list.querySelectorAll('.ms-item').forEach(el => el.onclick = e => {
-      e.preventDefault();
+      e.preventDefault(); e.stopPropagation(); // keep the list from being auto-hidden
       sel.push(+el.dataset.id); input.value = ''; renderChips(); renderList(); input.focus();
       list.hidden = false;
     });
   };
-  input.oninput = renderList;
+  input.oninput = () => { list.hidden = false; renderList(); }; // typing always shows fresh results
   input.onfocus = () => { list.hidden = false; renderList(); };
+  input.onkeydown = e => {
+    if (e.key === 'Enter') {
+      e.preventDefault(); // don't submit/close the form
+      const first = list.querySelector('.ms-item');
+      if (first && !list.hidden) first.click(); // Enter adds the top match
+    } else if (e.key === 'Escape') { list.hidden = true; }
+  };
   document.addEventListener('click', e => { if (mount.isConnected && !mount.contains(e.target)) list.hidden = true; });
   renderChips();
   return { get: () => [...sel], set: ids => { sel = [...ids]; renderChips(); renderList(); } };
@@ -158,29 +165,35 @@ const dateVal = txt => parseDate(txt.value) || txt.dataset.iso || '';
 
 /* ============================ PROJECTS ============================ */
 function renderProjects(main) {
-  const plist = [...S.projects].sort(byName).filter(p => hit(p.name, p.jira_name, p.manager, (p.contacts || []).join(' '), (p.channels || []).map(c => c.name).join(' ')));
+  const q = Q();
+  // Match by project fields, contacts, channels — AND by any assigned member's name,
+  // so typing a person shows every project they're on.
+  const memberMatch = p => q && (p.member_ids || []).some(id => memberName(id).toLowerCase().includes(q));
+  const plist = [...S.projects].sort(byName).filter(p =>
+    hit(p.name, p.jira_name, p.manager, (p.contacts || []).join(' '), (p.channels || []).map(c => c.name).join(' ')) || memberMatch(p));
+  const isNew = p => p.created_at && (Date.now() - new Date(p.created_at).getTime()) < 7 * 864e5; // added within 7 days
   main.innerHTML = `
     <div class="section-head">
-      <h1>Projects</h1><p>Source of truth for every project, its contacts, and its Slack channels.</p>
+      <h1>Projects</h1><p>Source of truth for every project, its contacts, and its Slack channels. Search a member's name to see their projects.</p>
       <span class="spacer"></span>
       <button class="btn-primary" id="addProject">Add project</button>
     </div>
     <div class="card">
-      ${plist.length ? `<table><thead><tr>
-        <th>Project</th><th>Jira</th><th>Manager</th><th>Slack channels (channel · org space · label)</th><th>Auto-send</th><th>Contacts</th><th></th>
+      ${plist.length ? `<div class="table-scroll"><table class="projects-table"><thead><tr>
+        <th>Project</th><th>Jira</th><th>Manager</th><th>Slack channels</th><th>Auto-send</th><th>Contacts</th><th></th>
       </tr></thead><tbody>
       ${plist.map(p => `<tr>
-        <td><strong>${esc(p.name)}</strong></td>
-        <td class="mono">${esc(p.jira_name) || '—'}</td>
-        <td>${esc(p.manager || '') || '—'}</td>
-        <td>${p.channels.length ? p.channels.map(c => `<div class="ch-line"><span class="hash">#${esc(c.name)}</span> <span class="muted">· ${esc(wsName(c.workspace_id))} ·</span> <span class="chip ${c.purpose}">${c.purpose}</span></div>`).join('') : ''}
-            ${p.notify_via_email && !p.channels.some(c => c.purpose === 'external') ? '<div class="ch-line"><span class="chip email">Email (manual client notice)</span></div>' : ''}
+        <td><strong>${esc(p.name)}</strong>${isNew(p) ? ' <span class="badge-new">New</span>' : ''}${q && memberMatch(p) ? `<div class="muted small">members: ${esc((p.member_ids || []).map(memberName).join(', '))}</div>` : ''}</td>
+        <td class="mono small">${esc(p.jira_name) || '—'}</td>
+        <td class="small">${esc(p.manager || '') || '—'}</td>
+        <td>${p.channels.length ? p.channels.map(c => `<div class="ch-line"><span class="hash">#${esc(c.name)}</span> <span class="muted small">· ${esc(wsName(c.workspace_id))}</span> <span class="chip ${c.purpose}">${c.purpose}</span></div>`).join('') : ''}
+            ${p.notify_via_email && !p.channels.some(c => c.purpose === 'external') ? '<div class="ch-line"><span class="chip email">Email (manual)</span></div>' : ''}
             ${!p.channels.length && !p.notify_via_email ? '<span class="muted small">no channels yet</span>' : ''}</td>
-        <td class="small">${p.auto_enabled && (p.auto_days || []).length ? esc(p.auto_days.map(d => DAYS[d].slice(0, 3)).join(', ')) + ' · ' + esc(p.auto_time || '09:00') : '—'}</td>
-        <td class="small">${p.contacts.map(esc).join(', ') || '—'}</td>
-        <td><button class="btn-link" data-edit="${p.id}">Edit</button><button class="btn-danger" data-del="${p.id}">Delete</button></td>
+        <td class="small nowrap">${p.auto_enabled && (p.auto_days || []).length ? esc(p.auto_days.map(d => DAYS[d].slice(0, 3)).join(', ')) + '<br>' + esc(p.auto_time || '09:00') : '—'}</td>
+        <td class="small contacts-cell" title="${esc(p.contacts.join(', '))}">${p.contacts.length ? esc(p.contacts.slice(0, 2).join(', ')) + (p.contacts.length > 2 ? ` <span class="chip">+${p.contacts.length - 2}</span>` : '') : '—'}</td>
+        <td class="nowrap"><button class="btn-link" data-edit="${p.id}">Edit</button><button class="btn-danger" data-del="${p.id}">Delete</button></td>
       </tr>`).join('')}
-      </tbody></table>` : `<div class="empty">${noMatch('No projects yet. Add your first project to start building notices.')}</div>`}
+      </tbody></table></div>` : `<div class="empty">${noMatch('No projects yet. Add your first project to start building notices.')}</div>`}
     </div>`;
   $('#addProject').onclick = () => projectForm();
   main.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => projectForm(S.projects.find(p => p.id === +b.dataset.edit)));
@@ -438,7 +451,10 @@ async function renderProjectView(main) {
   main.innerHTML = `<div class="section-head">
       <h1>Send Notif</h1>
       <p>Covers ${fmt(S.win.start)} → ${fmt(S.win.end)}. Only projects with approved time-off or members observing a holiday appear.</p>
+      <span class="spacer"></span>
+      <button class="btn-ghost" id="pvRefresh" title="Reload latest send timestamps">↻ Refresh</button>
     </div><div id="pvBody"><div class="empty">Loading…</div></div>`;
+  $('#pvRefresh').onclick = () => reload('Refreshed');
   const body = $('#pvBody');
   if (!S.projects.length) { body.innerHTML = '<div class="card"><div class="empty">No projects yet — add one in the Projects section.</div></div>'; return; }
 
@@ -606,14 +622,15 @@ function renderSettings(main) {
 /* ============================ router ============================ */
 const SECTIONS = { projects: renderProjects, members: renderMembers, holidays: renderHolidays, timeoff: renderTimeoff, projectview: renderProjectView, settings: renderSettings };
 let current = 'projectview';
-async function show(section) {
+async function show(section, fresh = false) {
   current = section;
+  if (fresh && section === 'projectview') await refresh(); // pick up any automatic sends
   document.querySelectorAll('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.sec === section));
   if (window.innerWidth <= 720) $('#sidebar').classList.add('collapsed'); // auto-close overlay on phones
   await SECTIONS[section]($('#main'));
 }
 async function reload(msg) { await refresh(); await show(current); if (msg) toast(msg); }
-document.querySelectorAll('.nav-item').forEach(b => b.onclick = () => show(b.dataset.sec));
+document.querySelectorAll('.nav-item').forEach(b => b.onclick = () => show(b.dataset.sec, true));
 
 // live search: filters whichever section is open
 let _qTimer;

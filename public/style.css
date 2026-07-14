@@ -312,3 +312,23 @@ dialog::backdrop { background: rgba(23, 41, 59, 0.45); }
 }
 .global-search:focus { outline: 2px solid var(--primary); outline-offset: 1px; }
 [data-theme="dark"] .global-search { background: var(--input-bg); color: var(--ink); border-color: var(--line); }
+
+/* projects table: compact contacts + non-wrapping schedule */
+.nowrap { white-space: nowrap; }
+.contacts-cell { max-width: 230px; overflow: hidden; text-overflow: ellipsis; }
+.contacts-cell .chip { cursor: help; }
+
+/* ---------- Projects table: never let it crush its own columns ---------- */
+.table-scroll { overflow-x: auto; }
+.table-scroll table { min-width: 760px; }
+
+/* ---------- Projects table: use full width, sensible column widths ---------- */
+.projects-table { width: 100%; table-layout: auto; }
+.projects-table th, .projects-table td { vertical-align: top; }
+.projects-table .ch-line { white-space: nowrap; }
+.contacts-cell { max-width: 200px; white-space: normal; word-break: break-word; }
+.badge-new {
+  display: inline-block; font-size: 10.5px; font-weight: 700; letter-spacing: 0.04em;
+  background: var(--ok); color: #fff; border-radius: 5px; padding: 1px 6px; margin-left: 6px;
+  vertical-align: 1px; text-transform: uppercase;
+}
