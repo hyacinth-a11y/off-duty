@@ -63,17 +63,21 @@ function parseManager(descriptionAdf) {
 const keyNumber = key => parseInt((key.split('-')[1] || '0'), 10);
 
 // Pull candidate issues from the POC project (newest first), page through them.
+// Uses the new enhanced search endpoint /rest/api/3/search/jql (the old
+// /rest/api/3/search was removed by Atlassian in 2025 and now returns 410).
+// Pagination is via nextPageToken rather than startAt.
 async function fetchOnboardingIssues() {
   const c = config();
-  const jql = encodeURIComponent(`project = ${c.projectKey} ORDER BY created DESC`);
+  const jql = `project = ${c.projectKey} ORDER BY created DESC`;
   const issues = [];
-  let startAt = 0;
+  let nextPageToken = null;
   for (let page = 0; page < 10; page++) { // safety cap: 10 pages
-    const data = await jiraGet(`/search?jql=${jql}&fields=summary,description&maxResults=100&startAt=${startAt}`);
+    const params = new URLSearchParams({ jql, fields: 'summary,description', maxResults: '100' });
+    if (nextPageToken) params.set('nextPageToken', nextPageToken);
+    const data = await jiraGet(`/search/jql?${params.toString()}`);
     for (const it of (data.issues || [])) issues.push(it);
-    if (startAt + (data.issues || []).length >= data.total) break;
-    startAt += (data.issues || []).length;
-    if (!(data.issues || []).length) break;
+    if (!data.nextPageToken || !(data.issues || []).length) break;
+    nextPageToken = data.nextPageToken;
   }
   return issues;
 }
