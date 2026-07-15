@@ -313,22 +313,29 @@ dialog::backdrop { background: rgba(23, 41, 59, 0.45); }
 .global-search:focus { outline: 2px solid var(--primary); outline-offset: 1px; }
 [data-theme="dark"] .global-search { background: var(--input-bg); color: var(--ink); border-color: var(--line); }
 
-/* projects table: compact contacts + non-wrapping schedule */
+/* projects table helpers */
 .nowrap { white-space: nowrap; }
-.contacts-cell { max-width: 230px; overflow: hidden; text-overflow: ellipsis; }
+.contacts-cell { white-space: normal; word-break: break-word; }
 .contacts-cell .chip { cursor: help; }
 
-/* ---------- Projects table: never let it crush its own columns ---------- */
-.table-scroll { overflow-x: auto; }
-/* No forced min-width — let the table use the available width; it only scrolls
-   on genuinely narrow screens where content can't otherwise fit. */
-@media (max-width: 640px) { .table-scroll table { min-width: 560px; } }
+/* ---------- Projects table: fill the available width, no side scroll ---------- */
+.table-scroll { overflow-x: visible; width: 100%; }
+.projects-table { width: 100%; table-layout: fixed; }
+.projects-table th, .projects-table td { overflow-wrap: anywhere; word-break: break-word; }
+/* balanced column widths (7 columns): Project, Jira, Manager, Channels, Auto, Contacts, actions */
+.projects-table th:nth-child(1), .projects-table td:nth-child(1) { width: 15%; }
+.projects-table th:nth-child(2), .projects-table td:nth-child(2) { width: 13%; }
+.projects-table th:nth-child(3), .projects-table td:nth-child(3) { width: 12%; }
+.projects-table th:nth-child(4), .projects-table td:nth-child(4) { width: 24%; }
+.projects-table th:nth-child(5), .projects-table td:nth-child(5) { width: 9%; }
+.projects-table th:nth-child(6), .projects-table td:nth-child(6) { width: 17%; }
+.projects-table th:nth-child(7), .projects-table td:nth-child(7) { width: 10%; }
+/* only allow a scroll on very small screens where columns truly can't fit */
+@media (max-width: 640px) { .table-scroll { overflow-x: auto; } .projects-table { table-layout: auto; min-width: 560px; } }
 
-/* ---------- Projects table: use full width, sensible column widths ---------- */
-.projects-table { width: 100%; table-layout: auto; }
+/* ---------- Projects table: vertical alignment + channel lines ---------- */
 .projects-table th, .projects-table td { vertical-align: top; }
 .projects-table .ch-line { white-space: nowrap; }
-.contacts-cell { max-width: 200px; white-space: normal; word-break: break-word; }
 .badge-new {
   display: inline-block; font-size: 10.5px; font-weight: 700; letter-spacing: 0.04em;
   background: var(--ok); color: #fff; border-radius: 5px; padding: 1px 6px; margin-left: 6px;
