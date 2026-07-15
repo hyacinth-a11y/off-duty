@@ -216,7 +216,7 @@ dialog::backdrop { background: rgba(23, 41, 59, 0.45); }
 .date-text.bad { border-color: var(--coral); outline-color: var(--coral); }
 
 /* channel lines inside the Projects table */
-.ch-line { display: flex; align-items: center; gap: 6px; padding: 2px 0; white-space: nowrap; }
+.ch-line { display: flex; align-items: center; gap: 6px; padding: 2px 0; white-space: normal; flex-wrap: wrap; }
 .ch-line .hash { font-family: var(--font-mono); font-size: 13px; font-weight: 600; color: var(--primary-ink); }
 
 /* ---------- project view v3: collapsible groups + member cards ---------- */
@@ -321,21 +321,21 @@ dialog::backdrop { background: rgba(23, 41, 59, 0.45); }
 /* ---------- Projects table: fill the available width, no side scroll ---------- */
 .table-scroll { overflow-x: visible; width: 100%; }
 .projects-table { width: 100%; table-layout: fixed; }
-.projects-table th, .projects-table td { overflow-wrap: anywhere; word-break: break-word; }
+.projects-table th, .projects-table td { overflow-wrap: anywhere; word-break: break-word; padding-right: 14px; }
 /* balanced column widths (7 columns): Project, Jira, Manager, Channels, Auto, Contacts, actions */
-.projects-table th:nth-child(1), .projects-table td:nth-child(1) { width: 15%; }
-.projects-table th:nth-child(2), .projects-table td:nth-child(2) { width: 13%; }
-.projects-table th:nth-child(3), .projects-table td:nth-child(3) { width: 12%; }
-.projects-table th:nth-child(4), .projects-table td:nth-child(4) { width: 24%; }
-.projects-table th:nth-child(5), .projects-table td:nth-child(5) { width: 9%; }
-.projects-table th:nth-child(6), .projects-table td:nth-child(6) { width: 17%; }
-.projects-table th:nth-child(7), .projects-table td:nth-child(7) { width: 10%; }
+.projects-table th:nth-child(1), .projects-table td:nth-child(1) { width: 13%; }
+.projects-table th:nth-child(2), .projects-table td:nth-child(2) { width: 15%; }
+.projects-table th:nth-child(3), .projects-table td:nth-child(3) { width: 11%; }
+.projects-table th:nth-child(4), .projects-table td:nth-child(4) { width: 27%; }
+.projects-table th:nth-child(5), .projects-table td:nth-child(5) { width: 8%; white-space: nowrap; }
+.projects-table th:nth-child(6), .projects-table td:nth-child(6) { width: 15%; }
+.projects-table th:nth-child(7), .projects-table td:nth-child(7) { width: 11%; white-space: nowrap; }
+.projects-table .ch-line { white-space: normal; }
 /* only allow a scroll on very small screens where columns truly can't fit */
 @media (max-width: 640px) { .table-scroll { overflow-x: auto; } .projects-table { table-layout: auto; min-width: 560px; } }
 
 /* ---------- Projects table: vertical alignment + channel lines ---------- */
 .projects-table th, .projects-table td { vertical-align: top; }
-.projects-table .ch-line { white-space: nowrap; }
 .badge-new {
   display: inline-block; font-size: 10.5px; font-weight: 700; letter-spacing: 0.04em;
   background: var(--ok); color: #fff; border-radius: 5px; padding: 1px 6px; margin-left: 6px;
