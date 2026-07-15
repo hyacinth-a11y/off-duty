@@ -261,6 +261,7 @@ function projectForm(p) {
         ${DAYS.map((d, i) => `<label style="display:flex;gap:5px;align-items:center;font-weight:400;color:var(--ink)"><input type="checkbox" class="pAutoDay" value="${i}" ${(p.auto_days || []).includes(i) ? 'checked' : ''} style="width:auto">${d}</label>`).join('')}
       </div>
       <div class="row"><label class="field" style="margin:0"><span>At this time</span><input type="time" id="pAutoTime" value="${esc(p.auto_time || '09:00')}"></label></div>
+      <label style="display:flex;gap:8px;align-items:center;font-weight:400;color:var(--ink);margin:8px 0 0"><input type="checkbox" id="pAntispam" ${p.antispam !== false ? 'checked' : ''} style="width:auto"> Skip automatic sends when the notice hasn't changed since last time (anti-spam)</label>
     </label>
     <label class="field"><span>Team members on this project — from the Team Members section. This is the source of truth: it auto-fills projects on time-off entries and drives the holiday list.</span>
       <div id="pmSelect"></div></label>
@@ -284,6 +285,7 @@ function projectForm(p) {
         auto_enabled: $('#pAutoEnabled', body).checked,
         auto_days: [...body.querySelectorAll('.pAutoDay:checked')].map(i => +i.value),
         auto_time: $('#pAutoTime', body).value || '09:00',
+        antispam: $('#pAntispam', body).checked,
         notify_via_email: $('#pEmail', body).checked,
         contacts: [...body.querySelectorAll('.contact')].map(i => i.value.trim()).filter(Boolean),
         channels: [...body.querySelectorAll('.channel-row')].map(r => ({
@@ -494,15 +496,22 @@ async function renderProjectView(main) {
   }
   const { reports, previews } = S._pvData;
 
-  // Flatten to sendable items, each tagged with its workspace
+  // Flatten to sendable items, each tagged with its workspace.
+  // "Needs attention": a channel whose current notice differs from what was last
+  // sent to it (i.e. new/changed info the channel hasn't received) — flags late
+  // requests that came in since the last send.
   const items = [];
   S.projects.forEach((p, i) => {
     const rep = reports[i], prev = previews[i];
     if (!rep || !prev || (!rep.ooo.length && !rep.holidayGroups.length)) return;
     if (!hit(p.name, (p.channels || []).map(c => c.name).join(' '))) return;
-    for (const m of prev.messages) items.push({ kind: m.channel.purpose, wsId: m.channel.workspace_id || null, p, m });
+    for (const m of prev.messages) {
+      const sentText = (m.channel.last_sent_text || '');
+      const currentText = (m.text || '').replaceAll('@here', '<!here>').replaceAll('@channel', '<!channel>');
+      const attention = !!m.channel.last_sent_at && sentText !== currentText; // sent before, but info changed since
+      items.push({ kind: m.channel.purpose, wsId: m.channel.workspace_id || null, p, m, attention });
+    }
     if (prev.emailFallback) {
-      // an email notice "belongs" to the workspace of the project's channels, if any
       const inferred = (p.channels.find(c => c.workspace_id) || {}).workspace_id || null;
       items.push({ kind: 'email', wsId: inferred, p, text: prev.emailFallback });
     }
@@ -517,15 +526,18 @@ async function renderProjectView(main) {
   S._pvWs = selected;
 
   const inWs = items.filter(it => it.wsId === selected);
+  const attentionCount = inWs.filter(it => it.attention).length;
   const group = (title, kind, hint) => {
-    const rows = inWs.filter(it => it.kind === kind);
-    return `<details class="pv-group" open>
-      <summary>${title} <span class="muted small">— ${rows.length ? rows.length + ' to send' : hint}</span></summary>
+    const rows = inWs.filter(it => it.kind === kind).sort((a, b) => (b.attention ? 1 : 0) - (a.attention ? 1 : 0)); // attention first
+    const needs = rows.filter(r => r.attention).length;
+    return `<details class="pv-group">
+      <summary>${title} <span class="muted small">— ${rows.length ? rows.length + ' to send' : hint}${needs ? ` · <span class="attention-pill">⚠️ ${needs} needs attention</span>` : ''}</span></summary>
       <div class="pv-group-body">${rows.map(it => it.kind === 'email' ? emailItem(it) : channelItem(it)).join('') || `<div class="empty">Nothing here for this period.</div>`}</div>
     </details>`;
   };
 
   body.innerHTML = `
+    ${attentionCount ? `<div class="attention-banner">⚠️ <strong>${attentionCount} channel(s)</strong> have new or changed time-off info since their last notice — they're marked below and sorted to the top.</div>` : ''}
     <div class="ws-tabs">${tabs.map(t => `<button class="ws-tab ${t.id === selected ? 'active' : ''}" data-ws="${t.id === null ? 'null' : t.id}">${esc(t.label)}</button>`).join('')}</div>
     ${group('Internal', 'internal', 'nothing to send')}
     ${group('External', 'external', 'nothing to send')}
@@ -563,10 +575,11 @@ async function renderProjectView(main) {
 // Collapsed row: project · #channel · last sent · Send. Click anywhere else to open the preview.
 function channelItem(it) {
   const ch = it.m.channel;
-  return `<details class="pv-item">
+  return `<details class="pv-item${it.attention ? ' needs-attention' : ''}">
     <summary>
       <strong>${esc(it.p.name)}</strong>
       <span class="hash">#${esc(ch.name)}</span>
+      ${it.attention ? '<span class="attention-pill">⚠️ new info</span>' : ''}
       <span class="spacer"></span>
       <span class="muted small last-sent">${ch.last_sent_at ? (ch.last_sent_via === 'auto' ? '🤖 Sent automatically: ' : 'Last sent (manual): ') + fmtDT(ch.last_sent_at) : 'Never sent yet'}</span>
       <button class="btn-primary ch-send" data-pid="${it.p.id}" data-chid="${ch.id}">Send</button>
