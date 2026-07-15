@@ -274,14 +274,22 @@ async function sendProjectNotifications(projectId, now = new Date(), channelId =
   const results = [];
   let first = true;
   for (const m of targets) {
+    const text = m.text.replaceAll('@here', '<!here>').replaceAll('@channel', '<!channel>');
+    // Anti-spam: on AUTOMATIC sends, if this project has the toggle on and the
+    // rendered text is identical to what we last sent this channel, skip silently.
+    // Manual sends always go through (you pressed the button on purpose).
+    const project = load().projects.find(p => p.id === projectId);
+    if (via === 'auto' && project && project.antispam && m.channel.last_sent_text === text) {
+      results.push({ channel: m.channel.name, ok: true, skipped: true, reason: 'no change since last send' });
+      continue;
+    }
     if (!first) await sleep(1200); // pace multi-channel sends so Slack never sees a burst
     first = false;
-    const text = m.text.replaceAll('@here', '<!here>').replaceAll('@channel', '<!channel>');
     // Webhook channels: simplest and most reliable path — use it whenever present
     if (m.channel.webhook_url) {
       try {
         await postWebhook(m.channel.webhook_url, text);
-        m.channel.last_sent_at = new Date().toISOString(); m.channel.last_sent_via = via; save();
+        m.channel.last_sent_at = new Date().toISOString(); m.channel.last_sent_via = via; m.channel.last_sent_text = text; save();
         results.push({ channel: m.channel.name, via: 'webhook', ok: true, error: null });
       } catch (e) {
         results.push({ channel: m.channel.name, via: 'webhook', ok: false, error: e.message });
@@ -294,7 +302,7 @@ async function sendProjectNotifications(projectId, now = new Date(), channelId =
     }
     try {
       await postToChannel(m.workspace.bot_token, m.channel, text);
-      m.channel.last_sent_at = new Date().toISOString(); m.channel.last_sent_via = via; save();
+      m.channel.last_sent_at = new Date().toISOString(); m.channel.last_sent_via = via; m.channel.last_sent_text = text; save();
       results.push({ channel: m.channel.name, workspace: m.workspace.name, ok: true, error: null });
     } catch (e) {
       results.push({ channel: m.channel.name, workspace: m.workspace.name, ok: false, error: e.message });

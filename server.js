@@ -77,6 +77,7 @@ app.post('/api/projects', (req, res) => {
     notify_via_email: !!b.notify_via_email,
     contacts: (b.contacts || []).filter(Boolean),
     auto_enabled: !!b.auto_enabled,
+    antispam: b.antispam !== undefined ? !!b.antispam : true,
     auto_days: Array.isArray(b.auto_days) ? b.auto_days.map(Number).filter(n => n >= 0 && n <= 6) : [],
     auto_time: /^\d{2}:\d{2}$/.test(b.auto_time || '') ? b.auto_time : '09:00',
     auto_last_sent: null,
@@ -101,6 +102,7 @@ app.put('/api/projects/:id', (req, res) => {
     auto_enabled: b.auto_enabled !== undefined ? !!b.auto_enabled : !!p.auto_enabled,
     auto_days: Array.isArray(b.auto_days) ? b.auto_days.map(Number).filter(n => n >= 0 && n <= 6) : (p.auto_days || []),
     auto_time: /^\d{2}:\d{2}$/.test(b.auto_time || '') ? b.auto_time : (p.auto_time || '09:00'),
+    antispam: b.antispam !== undefined ? !!b.antispam : (p.antispam !== undefined ? p.antispam : true),
   });
   if (b.channels) {
     const prevById = Object.fromEntries((p.channels || []).map(c => [c.id, c]));
