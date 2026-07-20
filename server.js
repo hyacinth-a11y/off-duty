@@ -267,7 +267,14 @@ app.all('/api/cron', async (req, res) => {
   if ((req.query.key || '') !== process.env.CRON_KEY) return res.status(403).json({ error: 'Wrong or missing key' });
   try {
     const { runDueSchedules } = require('./scheduler');
-    ok(res, await runDueSchedules(console.log, req.query.dry === '1'));
+    const dry = req.query.dry === '1';
+    const report = await runDueSchedules(console.log, dry);
+    // Keep the HTTP response TINY by default. cron-job.org rejects large responses
+    // ("Response data too big") and will auto-disable the job. The full report is
+    // still returned when you ask for it with &verbose=1 (or on a dry run).
+    if (dry || req.query.verbose === '1') return ok(res, report);
+    const sent = (report.projects || []).filter(p => p.note === 'sent').length;
+    res.json({ ok: true, sent });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
