@@ -1,5 +1,5 @@
 // Notification window logic, template rendering, and Slack delivery.
-const { load, save } = require('./db');
+const { load, save, saveNow } = require('./db');
 
 // ---------- date helpers (all in the configured timezone) ----------
 function partsInTz(date, tz) {
@@ -290,7 +290,7 @@ async function sendProjectNotifications(projectId, now = new Date(), channelId =
     if (m.channel.webhook_url) {
       try {
         await postWebhook(m.channel.webhook_url, text);
-        m.channel.last_sent_at = new Date().toISOString(); m.channel.last_sent_via = via; m.channel.last_sent_text = text; save();
+        m.channel.last_sent_at = new Date().toISOString(); m.channel.last_sent_via = via; m.channel.last_sent_text = text; await saveNow();
         results.push({ channel: m.channel.name, via: 'webhook', ok: true, error: null });
       } catch (e) {
         results.push({ channel: m.channel.name, via: 'webhook', ok: false, error: e.message });
@@ -303,7 +303,7 @@ async function sendProjectNotifications(projectId, now = new Date(), channelId =
     }
     try {
       await postToChannel(m.workspace.bot_token, m.channel, text);
-      m.channel.last_sent_at = new Date().toISOString(); m.channel.last_sent_via = via; m.channel.last_sent_text = text; save();
+      m.channel.last_sent_at = new Date().toISOString(); m.channel.last_sent_via = via; m.channel.last_sent_text = text; await saveNow();
       results.push({ channel: m.channel.name, workspace: m.workspace.name, ok: true, error: null });
     } catch (e) {
       results.push({ channel: m.channel.name, workspace: m.workspace.name, ok: false, error: e.message });

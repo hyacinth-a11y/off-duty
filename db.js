@@ -94,6 +94,15 @@ function save() {
   saveTimer = setTimeout(() => { saving = saving.then(persistNow).catch(e => console.error('save failed:', e.message)); }, 120);
 }
 
+// Flush immediately and wait for the write to finish. Use this for critical
+// state (like recording what was just sent) that MUST survive even if the free
+// host puts the app to sleep a moment after responding.
+async function saveNow() {
+  clearTimeout(saveTimer);
+  saving = saving.then(persistNow).catch(e => console.error('save failed:', e.message));
+  await saving;
+}
+
 async function persistNow() {
   if (pool) {
     await pool.query('UPDATE appdata SET data = $1 WHERE id = 1', [JSON.stringify(db)]);
@@ -108,4 +117,4 @@ function nextId() {
   return load().seq++;
 }
 
-module.exports = { initStore, load, save, nextId, DEFAULT_EXTERNAL_TEMPLATE, DEFAULT_INTERNAL_TEMPLATE };
+module.exports = { initStore, load, save, saveNow, nextId, DEFAULT_EXTERNAL_TEMPLATE, DEFAULT_INTERNAL_TEMPLATE };
