@@ -93,6 +93,23 @@ function projectReport(projectId, now = new Date()) {
   return { project, win, ooo, holidayGroups };
 }
 
+// A stable "signature" of what a project's notice is ABOUT — the people out, their
+// exact leave dates, and the holidays observed — independent of what day it is
+// today. Anti-spam compares this instead of the rendered message, so a notice
+// only counts as "changed" when someone is actually added/removed or a date is
+// edited — NOT merely because today's date advanced and a past day rolled off.
+function contentSignature(projectId, now = new Date()) {
+  const report = projectReport(projectId, now);
+  if (!report) return '';
+  const ooo = report.ooo
+    .map(t => `${t.member_id}:${t.start_date}>${t.end_date}`)
+    .sort();
+  const hol = report.holidayGroups
+    .map(g => `${g.date}:${g.members.map(m => m.id).sort().join(',')}`)
+    .sort();
+  return JSON.stringify({ ooo, hol });
+}
+
 function renderTemplate(template, report) {
   const { project, win, ooo, holidayGroups } = report;
   // Group by member: one line for a single entry, name + indented date bullets for several
@@ -275,12 +292,11 @@ async function sendProjectNotifications(projectId, now = new Date(), channelId =
   let first = true;
   for (const m of targets) {
     const text = m.text.replaceAll('@here', '<!here>').replaceAll('@channel', '<!channel>');
-    // Anti-spam (automatic sends only): if the notice text is identical to what
-    // we last sent this channel, skip silently. This is the ONLY thing that
-    // decides an auto-send now — a channel is messaged exactly when its notice
-    // changes (someone added/removed, dates changed) and never for a repeat.
-    // Manual sends always go through (you pressed the button on purpose).
-    if (via === 'auto' && m.channel.last_sent_text === text) {
+    const sig = contentSignature(projectId, now); // stable across date-rollover
+    // Anti-spam (automatic sends only): skip if the MEANING of the notice (who's
+    // out, their dates, holidays) is unchanged since last send — even if today's
+    // date advanced. Manual sends always go through.
+    if (via === 'auto' && m.channel.last_sent_sig === sig) {
       results.push({ channel: m.channel.name, ok: true, skipped: true, reason: 'no change since last send' });
       continue;
     }
@@ -290,7 +306,7 @@ async function sendProjectNotifications(projectId, now = new Date(), channelId =
     if (m.channel.webhook_url) {
       try {
         await postWebhook(m.channel.webhook_url, text);
-        m.channel.last_sent_at = new Date().toISOString(); m.channel.last_sent_via = via; m.channel.last_sent_text = text; await saveNow();
+        m.channel.last_sent_at = new Date().toISOString(); m.channel.last_sent_via = via; m.channel.last_sent_text = text; m.channel.last_sent_sig = sig; await saveNow();
         results.push({ channel: m.channel.name, via: 'webhook', ok: true, error: null });
       } catch (e) {
         results.push({ channel: m.channel.name, via: 'webhook', ok: false, error: e.message });
@@ -303,7 +319,7 @@ async function sendProjectNotifications(projectId, now = new Date(), channelId =
     }
     try {
       await postToChannel(m.workspace.bot_token, m.channel, text);
-      m.channel.last_sent_at = new Date().toISOString(); m.channel.last_sent_via = via; m.channel.last_sent_text = text; await saveNow();
+      m.channel.last_sent_at = new Date().toISOString(); m.channel.last_sent_via = via; m.channel.last_sent_text = text; m.channel.last_sent_sig = sig; await saveNow();
       results.push({ channel: m.channel.name, workspace: m.workspace.name, ok: true, error: null });
     } catch (e) {
       results.push({ channel: m.channel.name, workspace: m.workspace.name, ok: false, error: e.message });
