@@ -300,6 +300,8 @@ async function sendProjectNotifications(projectId, now = new Date(), channelId =
       results.push({ channel: m.channel.name, ok: true, skipped: true, reason: 'no change since last send' });
       continue;
     }
+    // DEBUG: if we're about to send on auto, record WHY (sig mismatch details)
+    const _dbg = via === 'auto' ? { saved: (m.channel.last_sent_sig || 'NULL').slice(0, 60), now: sig.slice(0, 60), match: m.channel.last_sent_sig === sig } : null;
     if (!first) await sleep(1200); // pace multi-channel sends so Slack never sees a burst
     first = false;
     // Webhook channels: simplest and most reliable path — use it whenever present
@@ -307,7 +309,7 @@ async function sendProjectNotifications(projectId, now = new Date(), channelId =
       try {
         await postWebhook(m.channel.webhook_url, text);
         m.channel.last_sent_at = new Date().toISOString(); m.channel.last_sent_via = via; m.channel.last_sent_text = text; m.channel.last_sent_sig = sig; await saveNow();
-        results.push({ channel: m.channel.name, via: 'webhook', ok: true, error: null });
+        results.push({ channel: m.channel.name, via: 'webhook', ok: true, error: null, dbg: _dbg });
       } catch (e) {
         results.push({ channel: m.channel.name, via: 'webhook', ok: false, error: e.message });
       }
@@ -320,7 +322,7 @@ async function sendProjectNotifications(projectId, now = new Date(), channelId =
     try {
       await postToChannel(m.workspace.bot_token, m.channel, text);
       m.channel.last_sent_at = new Date().toISOString(); m.channel.last_sent_via = via; m.channel.last_sent_text = text; m.channel.last_sent_sig = sig; await saveNow();
-      results.push({ channel: m.channel.name, workspace: m.workspace.name, ok: true, error: null });
+      results.push({ channel: m.channel.name, workspace: m.workspace.name, ok: true, error: null, dbg: _dbg });
     } catch (e) {
       results.push({ channel: m.channel.name, workspace: m.workspace.name, ok: false, error: e.message });
     }
