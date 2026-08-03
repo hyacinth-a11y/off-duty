@@ -331,4 +331,4 @@ async function sendProjectNotifications(projectId, now = new Date(), channelId =
   return { ok: results.every(r => r.ok), results };
 }
 
-module.exports = { reportingWindow, projectReport, buildMessages, sendProjectNotifications, partsInTz, fmtRange, fmtDate };
+module.exports = { reportingWindow, projectReport, buildMessages, sendProjectNotifications, contentSignature, partsInTz, fmtRange, fmtDate };

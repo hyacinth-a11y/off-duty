@@ -281,6 +281,28 @@ app.all('/api/cron', async (req, res) => {
 // ---------------- Jira sync ----------------
 const { syncFromJira, isConfigured: jiraConfigured } = require('./jira');
 app.get('/api/jira/status', (req, res) => ok(res, { configured: jiraConfigured() }));
+
+// Diagnostic: show, per project/channel, the SAVED signature vs the one computed
+// right now, so we can see exactly why anti-spam does or doesn't skip.
+app.get('/api/antispam-debug', (req, res) => {
+  const { contentSignature } = require('./notify');
+  const db = load();
+  const out = [];
+  for (const p of db.projects) {
+    if (!p.auto_enabled) continue;
+    const nowSig = contentSignature(p.id);
+    for (const ch of (p.channels || [])) {
+      out.push({
+        project: p.name,
+        channel: ch.name,
+        saved_sig: ch.last_sent_sig || null,
+        current_sig: nowSig,
+        would_skip: ch.last_sent_sig === nowSig,
+      });
+    }
+  }
+  ok(res, out);
+});
 app.post('/api/jira/sync', async (req, res) => {
   ok(res, await syncFromJira(req.query.dry === '1'));
 });
