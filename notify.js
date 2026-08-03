@@ -275,11 +275,12 @@ async function sendProjectNotifications(projectId, now = new Date(), channelId =
   let first = true;
   for (const m of targets) {
     const text = m.text.replaceAll('@here', '<!here>').replaceAll('@channel', '<!channel>');
-    // Anti-spam: on AUTOMATIC sends, if this project has the toggle on and the
-    // rendered text is identical to what we last sent this channel, skip silently.
+    // Anti-spam (automatic sends only): if the notice text is identical to what
+    // we last sent this channel, skip silently. This is the ONLY thing that
+    // decides an auto-send now — a channel is messaged exactly when its notice
+    // changes (someone added/removed, dates changed) and never for a repeat.
     // Manual sends always go through (you pressed the button on purpose).
-    const project = load().projects.find(p => p.id === projectId);
-    if (via === 'auto' && project && project.antispam && m.channel.last_sent_text === text) {
+    if (via === 'auto' && m.channel.last_sent_text === text) {
       results.push({ channel: m.channel.name, ok: true, skipped: true, reason: 'no change since last send' });
       continue;
     }

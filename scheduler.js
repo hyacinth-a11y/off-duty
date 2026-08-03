@@ -31,30 +31,34 @@ async function runDueSchedules(log = () => {}, dry = false) {
     if (!p.auto_enabled) continue; // not scheduled — stay quiet about it
     if (!(p.auto_days || []).includes(dow)) { line.note = 'not a scheduled day'; status.projects.push(line); continue; }
     if ((p.auto_time || '09:00') > hm) { line.note = `due at ${p.auto_time} — not yet`; status.projects.push(line); continue; }
-    if (p.auto_last_sent === today) { line.note = 'already handled today'; status.projects.push(line); continue; }
 
     const rep = projectReport(p.id);
     const hasNews = rep && (rep.ooo.length || rep.holidayGroups.length);
     if (!hasNews) {
-      line.note = 'due, but nothing to announce — skipped';
-      if (!dry) { p.auto_last_sent = today; save(); }
+      line.note = 'nothing to announce — skipped';
       status.projects.push(line); continue;
     }
     if (!(p.channels || []).length) { line.note = 'due, but no channels configured'; status.projects.push(line); continue; }
 
     if (dry) {
-      line.note = 'DUE — would send now';
+      line.note = 'DUE — would send if the notice changed since last time';
       line.channels = p.channels.map(c => `#${c.name} (${c.purpose})`);
       status.projects.push(line); continue;
     }
 
-    log(`[auto-send] ${p.name}: sending to ${p.channels.length} channel(s)`);
+    // No once-per-day guard. The anti-spam check inside sendProjectNotifications
+    // is the single decision: it sends only channels whose notice text CHANGED
+    // since their last send, and silently skips channels whose text is identical.
+    // Result: a channel hears from the bot exactly when its roster/dates change,
+    // and never for an unchanged repeat — no matter how often this runs.
+    log(`[auto-send] ${p.name}: evaluating ${p.channels.length} channel(s)`);
     const r = await sendProjectNotifications(p.id, new Date(), null, 'auto');
-    // Count only real Slack deliveries — the informational "(email — send manually)"
-    // line must not mask a failed channel send, or email-marked projects never retry.
-    const anyOk = (r.results || []).some(x => x.ok && !x.skipped);
-    if (anyOk) { p.auto_last_sent = today; save(); }
-    line.note = anyOk ? 'sent' : 'all channels failed — will retry on next ping';
+    const sent = (r.results || []).filter(x => x.ok && !x.skipped).length;
+    const skipped = (r.results || []).filter(x => x.skipped).length;
+    const failed = (r.results || []).filter(x => !x.ok).length;
+    line.note = failed ? `${sent} sent, ${skipped} unchanged, ${failed} failed (will retry)` :
+                sent ? `${sent} sent, ${skipped} unchanged (no change)` :
+                'no change since last send — skipped';
     line.results = r.results;
     log('[auto-send] result:', JSON.stringify(r.results));
     status.projects.push(line);
