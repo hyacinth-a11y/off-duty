@@ -190,7 +190,16 @@ function renderProjects(main) {
         <td>${p.channels.length ? p.channels.map(c => `<div class="ch-line"><span class="hash">#${esc(c.name)}</span> <span class="muted small">· ${esc(wsName(c.workspace_id))}</span> <span class="chip ${c.purpose}">${c.purpose}</span></div>`).join('') : ''}
             ${p.notify_via_email && !p.channels.some(c => c.purpose === 'external') ? '<div class="ch-line"><span class="chip email">Email (manual)</span></div>' : ''}
             ${!p.channels.length && !p.notify_via_email ? '<span class="muted small">no channels yet</span>' : ''}</td>
-        <td class="small nowrap">${p.auto_enabled && (p.auto_days || []).length ? esc(p.auto_days.map(d => DAYS[d].slice(0, 3)).join(', ')) + '<br>' + esc(p.auto_time || '09:00') : '—'}</td>
+        <td class="small">${(() => {
+          const scheduled = (p.channels || []).filter(c => c.sched && c.sched.enabled);
+          if (!scheduled.length) return '—';
+          const DAYS3 = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+          const desc = s => s.type === 'weekly' ? `${DAYS3[s.dow]} ${s.time}`
+            : s.type === 'biweekly' ? `1st & 3rd ${DAYS3[s.dow]} ${s.time}`
+            : s.type === 'monthly' ? `day ${s.day} ${s.time}`
+            : `day ${s.day1} & ${s.day2} ${s.time}`;
+          return scheduled.map(c => `<div class="nowrap"><span class="hash">#${esc(c.name)}</span>: ${esc(desc(c.sched))}</div>`).join('');
+        })()}</td>
         <td class="small contacts-cell" title="${esc(p.contacts.join(', '))}">${p.contacts.length ? esc(p.contacts.slice(0, 2).join(', ')) + (p.contacts.length > 2 ? ` <span class="chip">+${p.contacts.length - 2}</span>` : '') : '—'}</td>
         <td class="nowrap"><button class="btn-link" data-edit="${p.id}">Edit</button><button class="btn-danger" data-del="${p.id}">Delete</button></td>
       </tr>`).join('')}
@@ -230,7 +239,11 @@ function projectForm(p) {
   p = p || { name: '', jira_name: '', manager: '', notify_via_email: false, contacts: [], channels: [], member_ids: [] };
   const wsOpts = sel => `<option value="">— pick workspace —</option>` + S.workspaces.map(w => `<option value="${w.id}" ${w.id === sel ? 'selected' : ''}>${esc(w.name)}</option>`).join('');
   const contactRow = v => `<input type="text" class="contact" value="${esc(v)}" placeholder="Contact name" style="margin-bottom:6px">`;
-  const channelRow = c => `<div class="channel-row" style="margin-bottom:12px;border:1px dashed var(--line);border-radius:8px;padding:8px">
+  const SCHED_DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const channelRow = c => {
+    const s = c.sched || { enabled: false, type: 'weekly', dow: 1, day: 1, day1: 1, day2: 15, time: '09:00' };
+    const dayOpts = (sel) => Array.from({ length: 31 }, (_, i) => `<option value="${i + 1}" ${+sel === i + 1 ? 'selected' : ''}>${i + 1}</option>`).join('');
+    return `<div class="channel-row" style="margin-bottom:12px;border:1px dashed var(--line);border-radius:8px;padding:8px">
       <div class="row">
         <input type="text" class="ch-name" value="${esc(c.name || '')}" placeholder="channel-name (label)">
         <select class="ch-ws">${wsOpts(c.workspace_id)}</select>
@@ -238,7 +251,32 @@ function projectForm(p) {
         <button type="button" class="btn-danger ch-del" style="flex:0">✕</button>
       </div>
       <input type="text" class="ch-webhook" value="${esc(c.webhook_url || '')}" placeholder="Webhook URL (recommended): https://hooks.slack.com/services/…" style="margin-top:6px">
+      <div class="ch-sched" style="margin-top:8px;padding-top:8px;border-top:1px solid var(--line)">
+        <label style="display:flex;gap:6px;align-items:center;font-weight:600;color:var(--ink)"><input type="checkbox" class="cs-enabled" ${s.enabled ? 'checked' : ''} style="width:auto"> Automatic schedule for this channel</label>
+        <div class="cs-body" style="margin-top:6px;display:${s.enabled ? 'block' : 'none'}">
+          <div class="row" style="align-items:flex-end;gap:8px">
+            <label class="field" style="margin:0"><span>Frequency</span>
+              <select class="cs-type">
+                <option value="weekly" ${s.type === 'weekly' ? 'selected' : ''}>Weekly</option>
+                <option value="biweekly" ${s.type === 'biweekly' ? 'selected' : ''}>Bi-weekly (1st & 3rd weekday)</option>
+                <option value="monthly" ${s.type === 'monthly' ? 'selected' : ''}>Monthly (one date)</option>
+                <option value="twicedates" ${s.type === 'twicedates' ? 'selected' : ''}>Twice a month (two dates)</option>
+              </select></label>
+            <label class="field cs-dow-wrap" style="margin:0"><span>Weekday</span>
+              <select class="cs-dow">${SCHED_DAYS.map((d, i) => `<option value="${i}" ${+s.dow === i ? 'selected' : ''}>${d}</option>`).join('')}</select></label>
+            <label class="field cs-day-wrap" style="margin:0"><span>Day of month</span>
+              <select class="cs-day">${dayOpts(s.day)}</select></label>
+            <label class="field cs-day1-wrap" style="margin:0"><span>1st date</span>
+              <select class="cs-day1">${dayOpts(s.day1)}</select></label>
+            <label class="field cs-day2-wrap" style="margin:0"><span>2nd date</span>
+              <select class="cs-day2">${dayOpts(s.day2)}</select></label>
+            <label class="field" style="margin:0"><span>Time (PH)</span><input type="time" class="cs-time" value="${esc(s.time || '09:00')}"></label>
+          </div>
+          <p class="muted small" style="margin:4px 0 0">31st automatically becomes the last day in shorter months. Bi-weekly = 1st & 3rd of the chosen weekday.</p>
+        </div>
+      </div>
     </div>`;
+  };
   openModal(`
     <h2>${p.id ? 'Edit project' : 'Add project'}</h2>
     <div class="row">
@@ -255,14 +293,6 @@ function projectForm(p) {
     <label class="field" style="display:flex;gap:8px;align-items:center">
       <input type="checkbox" id="pEmail" ${p.notify_via_email ? 'checked' : ''} style="width:auto">
       <span style="margin:0">No external Slack channel — mark as <strong>Email</strong> (I'll notify the client manually)</span></label>
-    <label class="field"><span>Automatic sending — on the chosen days at the chosen time (Philippine time), this project's notice goes to ALL its channels automatically. It skips silently when nobody is out and no holidays apply. You can always still press Send manually.</span>
-      <label style="display:flex;gap:8px;align-items:center;font-weight:600;color:var(--ink);margin:6px 0"><input type="checkbox" id="pAutoEnabled" ${p.auto_enabled ? 'checked' : ''} style="width:auto"> Enable schedule for this project</label>
-      <div style="display:flex;gap:12px;flex-wrap:wrap;margin:4px 0 10px">
-        ${DAYS.map((d, i) => `<label style="display:flex;gap:5px;align-items:center;font-weight:400;color:var(--ink)"><input type="checkbox" class="pAutoDay" value="${i}" ${(p.auto_days || []).includes(i) ? 'checked' : ''} style="width:auto">${d}</label>`).join('')}
-      </div>
-      <div class="row"><label class="field" style="margin:0"><span>At this time</span><input type="time" id="pAutoTime" value="${esc(p.auto_time || '09:00')}"></label></div>
-      <label style="display:flex;gap:8px;align-items:center;font-weight:400;color:var(--ink);margin:8px 0 0"><input type="checkbox" id="pAntispam" ${p.antispam !== false ? 'checked' : ''} style="width:auto"> Skip automatic sends when the notice hasn't changed since last time (anti-spam)</label>
-    </label>
     <label class="field"><span>Team members on this project — from the Team Members section. This is the source of truth: it auto-fills projects on time-off entries and drives the holiday list.</span>
       <div id="pmSelect"></div></label>
     <div class="modal-actions"><button class="btn-ghost" id="mCancel">Cancel</button><button class="btn-primary" id="mSave">Save project</button></div>
@@ -273,19 +303,33 @@ function projectForm(p) {
       placeholder: 'Type a member name to add…',
     });
     $('#addContact', body).onclick = () => $('#contacts', body).insertAdjacentHTML('beforeend', contactRow(''));
-    $('#addChannel', body).onclick = () => { $('#channels', body).insertAdjacentHTML('beforeend', channelRow({})); bindDel(); };
+    // Show only the schedule fields relevant to the chosen frequency, per channel row
+    const syncSched = row => {
+      const on = $('.cs-enabled', row).checked;
+      $('.cs-body', row).style.display = on ? 'block' : 'none';
+      const type = $('.cs-type', row).value;
+      const show = (sel, vis) => { const el = $(sel, row); if (el) el.style.display = vis ? '' : 'none'; };
+      show('.cs-dow-wrap', type === 'weekly' || type === 'biweekly');
+      show('.cs-day-wrap', type === 'monthly');
+      show('.cs-day1-wrap', type === 'twicedates');
+      show('.cs-day2-wrap', type === 'twicedates');
+    };
+    const bindSched = () => body.querySelectorAll('.channel-row').forEach(row => {
+      const e = $('.cs-enabled', row), t = $('.cs-type', row);
+      if (e) e.onchange = () => syncSched(row);
+      if (t) t.onchange = () => syncSched(row);
+      syncSched(row);
+    });
+    $('#addChannel', body).onclick = () => { $('#channels', body).insertAdjacentHTML('beforeend', channelRow({})); bindDel(); bindSched(); };
     const bindDel = () => body.querySelectorAll('.ch-del').forEach(x => x.onclick = () => x.closest('.channel-row').remove());
     bindDel();
+    bindSched();
     $('#mCancel', body).onclick = closeModal;
     busyClick($('#mSave', body), async () => {
       const payload = {
         name: $('#pName', body).value.trim(),
         jira_name: $('#pJira', body).value.trim(),
         manager: $('#pManager', body).value.trim(),
-        auto_enabled: $('#pAutoEnabled', body).checked,
-        auto_days: [...body.querySelectorAll('.pAutoDay:checked')].map(i => +i.value),
-        auto_time: $('#pAutoTime', body).value || '09:00',
-        antispam: $('#pAntispam', body).checked,
         notify_via_email: $('#pEmail', body).checked,
         contacts: [...body.querySelectorAll('.contact')].map(i => i.value.trim()).filter(Boolean),
         channels: [...body.querySelectorAll('.channel-row')].map(r => ({
@@ -293,6 +337,15 @@ function projectForm(p) {
           workspace_id: +$('.ch-ws', r).value || null,
           purpose: $('.ch-purpose', r).value,
           webhook_url: $('.ch-webhook', r).value.trim(),
+          sched: {
+            enabled: $('.cs-enabled', r).checked,
+            type: $('.cs-type', r).value,
+            dow: +$('.cs-dow', r).value,
+            day: +$('.cs-day', r).value,
+            day1: +$('.cs-day1', r).value,
+            day2: +$('.cs-day2', r).value,
+            time: $('.cs-time', r).value || '09:00',
+          },
         })).filter(c => c.name || c.webhook_url),
         member_ids: pmMs.get(),
       };
