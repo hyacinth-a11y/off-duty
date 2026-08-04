@@ -52,6 +52,22 @@ app.delete('/api/workspaces/:id', (req, res) => {
 // Projects are the source of truth for member↔project mapping. Whenever a
 // project's roster changes, reconcile every member's time-off entries with it:
 // on the roster → their entries gain this project; off the roster → they lose it.
+// Clean up a per-channel schedule object coming from the form.
+function normalizeSched(s) {
+  s = s || {};
+  const type = ['weekly', 'biweekly', 'monthly', 'twicedates'].includes(s.type) ? s.type : 'weekly';
+  const clampDom = n => Math.min(Math.max(parseInt(n, 10) || 1, 1), 31);
+  return {
+    enabled: !!s.enabled,
+    type,
+    dow: Math.min(Math.max(parseInt(s.dow, 10) || 0, 0), 6),
+    day: clampDom(s.day),
+    day1: clampDom(s.day1),
+    day2: clampDom(s.day2),
+    time: /^\d{2}:\d{2}$/.test(s.time || '') ? s.time : '09:00',
+  };
+}
+
 function syncTimeoffsWithRoster(project) {
   const d = db();
   for (const t of d.timeoffs) {
@@ -81,7 +97,7 @@ app.post('/api/projects', (req, res) => {
     auto_days: Array.isArray(b.auto_days) ? b.auto_days.map(Number).filter(n => n >= 0 && n <= 6) : [],
     auto_time: /^\d{2}:\d{2}$/.test(b.auto_time || '') ? b.auto_time : '09:00',
     auto_last_sent: null,
-    channels: (b.channels || []).filter(c => c.name || c.webhook_url).map(c => ({ id: nextId(), name: c.name || 'via-webhook', workspace_id: c.workspace_id || null, purpose: c.purpose === 'external' ? 'external' : 'internal', webhook_url: c.webhook_url || '' })),
+    channels: (b.channels || []).filter(c => c.name || c.webhook_url).map(c => ({ id: nextId(), name: c.name || 'via-webhook', workspace_id: c.workspace_id || null, purpose: c.purpose === 'external' ? 'external' : 'internal', webhook_url: c.webhook_url || '', sched: normalizeSched(c.sched), sched_last_sent: null })),
     member_ids: b.member_ids || [],
   };
   db().projects.push(p); syncTimeoffsWithRoster(p); save(); ok(res, { id: p.id });
@@ -115,9 +131,11 @@ app.put('/api/projects/:id', (req, res) => {
         workspace_id: c.workspace_id || null,
         purpose: c.purpose === 'external' ? 'external' : 'internal',
         webhook_url: c.webhook_url || '',
+        sched: normalizeSched(c.sched),
         // keep send history across edits
         last_sent_at: prev.last_sent_at || null,
         last_sent_via: prev.last_sent_via || null,
+        sched_last_sent: prev.sched_last_sent || null,
         // keep the cached Slack channel ID only if the channel name didn't change
         resolved_id: prev.name === name ? (prev.resolved_id || null) : null,
       };
@@ -273,7 +291,7 @@ app.all('/api/cron', async (req, res) => {
     // ("Response data too big") and will auto-disable the job. The full report is
     // still returned when you ask for it with &verbose=1 (or on a dry run).
     if (dry || req.query.verbose === '1') return ok(res, report);
-    const sent = (report.projects || []).filter(p => p.note === 'sent').length;
+    const sent = (report.channels || []).filter(c => c.note === 'sent').length;
     res.json({ ok: true, sent });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -281,28 +299,6 @@ app.all('/api/cron', async (req, res) => {
 // ---------------- Jira sync ----------------
 const { syncFromJira, isConfigured: jiraConfigured } = require('./jira');
 app.get('/api/jira/status', (req, res) => ok(res, { configured: jiraConfigured() }));
-
-// Diagnostic: show, per project/channel, the SAVED signature vs the one computed
-// right now, so we can see exactly why anti-spam does or doesn't skip.
-app.get('/api/antispam-debug', (req, res) => {
-  const { contentSignature } = require('./notify');
-  const db = load();
-  const out = [];
-  for (const p of db.projects) {
-    if (!p.auto_enabled) continue;
-    const nowSig = contentSignature(p.id);
-    for (const ch of (p.channels || [])) {
-      out.push({
-        project: p.name,
-        channel: ch.name,
-        saved_sig: ch.last_sent_sig || null,
-        current_sig: nowSig,
-        would_skip: ch.last_sent_sig === nowSig,
-      });
-    }
-  }
-  ok(res, out);
-});
 app.post('/api/jira/sync', async (req, res) => {
   ok(res, await syncFromJira(req.query.dry === '1'));
 });

@@ -292,24 +292,14 @@ async function sendProjectNotifications(projectId, now = new Date(), channelId =
   let first = true;
   for (const m of targets) {
     const text = m.text.replaceAll('@here', '<!here>').replaceAll('@channel', '<!channel>');
-    const sig = contentSignature(projectId, now); // stable across date-rollover
-    // Anti-spam (automatic sends only): skip if the MEANING of the notice (who's
-    // out, their dates, holidays) is unchanged since last send — even if today's
-    // date advanced. Manual sends always go through.
-    if (via === 'auto' && m.channel.last_sent_sig === sig) {
-      results.push({ channel: m.channel.name, ok: true, skipped: true, reason: 'no change since last send' });
-      continue;
-    }
-    // DEBUG: if we're about to send on auto, record WHY (sig mismatch details)
-    const _dbg = via === 'auto' ? { saved: (m.channel.last_sent_sig || 'NULL').slice(0, 60), now: sig.slice(0, 60), match: m.channel.last_sent_sig === sig } : null;
     if (!first) await sleep(1200); // pace multi-channel sends so Slack never sees a burst
     first = false;
     // Webhook channels: simplest and most reliable path — use it whenever present
     if (m.channel.webhook_url) {
       try {
         await postWebhook(m.channel.webhook_url, text);
-        m.channel.last_sent_at = new Date().toISOString(); m.channel.last_sent_via = via; m.channel.last_sent_text = text; m.channel.last_sent_sig = sig; await saveNow();
-        results.push({ channel: m.channel.name, via: 'webhook', ok: true, error: null, dbg: _dbg });
+        m.channel.last_sent_at = new Date().toISOString(); m.channel.last_sent_via = via; m.channel.last_sent_text = text; await saveNow();
+        results.push({ channel: m.channel.name, via: 'webhook', ok: true, error: null });
       } catch (e) {
         results.push({ channel: m.channel.name, via: 'webhook', ok: false, error: e.message });
       }
@@ -321,8 +311,8 @@ async function sendProjectNotifications(projectId, now = new Date(), channelId =
     }
     try {
       await postToChannel(m.workspace.bot_token, m.channel, text);
-      m.channel.last_sent_at = new Date().toISOString(); m.channel.last_sent_via = via; m.channel.last_sent_text = text; m.channel.last_sent_sig = sig; await saveNow();
-      results.push({ channel: m.channel.name, workspace: m.workspace.name, ok: true, error: null, dbg: _dbg });
+      m.channel.last_sent_at = new Date().toISOString(); m.channel.last_sent_via = via; m.channel.last_sent_text = text; await saveNow();
+      results.push({ channel: m.channel.name, workspace: m.workspace.name, ok: true, error: null });
     } catch (e) {
       results.push({ channel: m.channel.name, workspace: m.workspace.name, ok: false, error: e.message });
     }
