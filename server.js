@@ -52,7 +52,7 @@ app.delete('/api/workspaces/:id', (req, res) => {
 // Projects are the source of truth for member↔project mapping. Whenever a
 // project's roster changes, reconcile every member's time-off entries with it:
 // on the roster → their entries gain this project; off the roster → they lose it.
-// Clean up a per-channel schedule object coming from the form.
+// Clean up a project schedule object coming from the form.
 function normalizeSched(s) {
   s = s || {};
   const type = ['weekly', 'biweekly', 'monthly', 'twicedates'].includes(s.type) ? s.type : 'weekly';
@@ -92,12 +92,9 @@ app.post('/api/projects', (req, res) => {
     type: b.type === 'external' ? 'external' : 'internal',
     notify_via_email: !!b.notify_via_email,
     contacts: (b.contacts || []).filter(Boolean),
-    auto_enabled: !!b.auto_enabled,
-    antispam: b.antispam !== undefined ? !!b.antispam : true,
-    auto_days: Array.isArray(b.auto_days) ? b.auto_days.map(Number).filter(n => n >= 0 && n <= 6) : [],
-    auto_time: /^\d{2}:\d{2}$/.test(b.auto_time || '') ? b.auto_time : '09:00',
-    auto_last_sent: null,
-    channels: (b.channels || []).filter(c => c.name || c.webhook_url).map(c => ({ id: nextId(), name: c.name || 'via-webhook', workspace_id: c.workspace_id || null, purpose: c.purpose === 'external' ? 'external' : 'internal', webhook_url: c.webhook_url || '', sched: normalizeSched(c.sched), sched_last_sent: null })),
+    sched: normalizeSched(b.sched),
+    sched_last_sent: null,
+    channels: (b.channels || []).filter(c => c.name || c.webhook_url).map(c => ({ id: nextId(), name: c.name || 'via-webhook', workspace_id: c.workspace_id || null, purpose: c.purpose === 'external' ? 'external' : 'internal', webhook_url: c.webhook_url || '' })),
     member_ids: b.member_ids || [],
   };
   db().projects.push(p); syncTimeoffsWithRoster(p); save(); ok(res, { id: p.id });
@@ -115,10 +112,7 @@ app.put('/api/projects/:id', (req, res) => {
     notify_via_email: b.notify_via_email !== undefined ? !!b.notify_via_email : p.notify_via_email,
     contacts: b.contacts ?? p.contacts,
     member_ids: b.member_ids ?? p.member_ids,
-    auto_enabled: b.auto_enabled !== undefined ? !!b.auto_enabled : !!p.auto_enabled,
-    auto_days: Array.isArray(b.auto_days) ? b.auto_days.map(Number).filter(n => n >= 0 && n <= 6) : (p.auto_days || []),
-    auto_time: /^\d{2}:\d{2}$/.test(b.auto_time || '') ? b.auto_time : (p.auto_time || '09:00'),
-    antispam: b.antispam !== undefined ? !!b.antispam : (p.antispam !== undefined ? p.antispam : true),
+    sched: b.sched !== undefined ? normalizeSched(b.sched) : (p.sched || normalizeSched(null)),
   });
   if (b.channels) {
     const prevById = Object.fromEntries((p.channels || []).map(c => [c.id, c]));
@@ -131,11 +125,9 @@ app.put('/api/projects/:id', (req, res) => {
         workspace_id: c.workspace_id || null,
         purpose: c.purpose === 'external' ? 'external' : 'internal',
         webhook_url: c.webhook_url || '',
-        sched: normalizeSched(c.sched),
         // keep send history across edits
         last_sent_at: prev.last_sent_at || null,
         last_sent_via: prev.last_sent_via || null,
-        sched_last_sent: prev.sched_last_sent || null,
         // keep the cached Slack channel ID only if the channel name didn't change
         resolved_id: prev.name === name ? (prev.resolved_id || null) : null,
       };
@@ -310,9 +302,6 @@ app.put('/api/settings', (req, res) => {
   if (b.timezone) s.timezone = b.timezone;
   if (b.internal_template !== undefined) s.internal_template = b.internal_template || DEFAULT_INTERNAL_TEMPLATE;
   if (b.external_template !== undefined) s.external_template = b.external_template || DEFAULT_EXTERNAL_TEMPLATE;
-  if (b.auto_enabled !== undefined) s.auto_enabled = !!b.auto_enabled;
-  if (Array.isArray(b.auto_days)) s.auto_days = b.auto_days.map(Number).filter(n => n >= 0 && n <= 6);
-  if (/^\d{2}:\d{2}$/.test(b.auto_time || '')) s.auto_time = b.auto_time;
   save(); ok(res);
 });
 
