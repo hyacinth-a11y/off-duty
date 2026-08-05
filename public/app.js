@@ -191,14 +191,14 @@ function renderProjects(main) {
             ${p.notify_via_email && !p.channels.some(c => c.purpose === 'external') ? '<div class="ch-line"><span class="chip email">Email (manual)</span></div>' : ''}
             ${!p.channels.length && !p.notify_via_email ? '<span class="muted small">no channels yet</span>' : ''}</td>
         <td class="small">${(() => {
-          const scheduled = (p.channels || []).filter(c => c.sched && c.sched.enabled);
-          if (!scheduled.length) return '—';
-          const DAYS3 = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-          const desc = s => s.type === 'weekly' ? `${DAYS3[s.dow]} ${s.time}`
-            : s.type === 'biweekly' ? `1st & 3rd ${DAYS3[s.dow]} ${s.time}`
-            : s.type === 'monthly' ? `day ${s.day} ${s.time}`
-            : `day ${s.day1} & ${s.day2} ${s.time}`;
-          return scheduled.map(c => `<div class="nowrap"><span class="hash">#${esc(c.name)}</span>: ${esc(desc(c.sched))}</div>`).join('');
+          const s = p.sched;
+          if (!s || !s.enabled) return '—';
+          const D = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+          const txt = s.type === 'weekly' ? `${D[s.dow]}`
+            : s.type === 'biweekly' ? `1st & 3rd ${D[s.dow]}`
+            : s.type === 'monthly' ? `day ${s.day}`
+            : `day ${s.day1} & ${s.day2}`;
+          return `${esc(txt)}<br>${esc(s.time || '09:00')}`;
         })()}</td>
         <td class="small contacts-cell" title="${esc(p.contacts.join(', '))}">${p.contacts.length ? esc(p.contacts.slice(0, 2).join(', ')) + (p.contacts.length > 2 ? ` <span class="chip">+${p.contacts.length - 2}</span>` : '') : '—'}</td>
         <td class="nowrap"><button class="btn-link" data-edit="${p.id}">Edit</button><button class="btn-danger" data-del="${p.id}">Delete</button></td>
@@ -239,11 +239,9 @@ function projectForm(p) {
   p = p || { name: '', jira_name: '', manager: '', notify_via_email: false, contacts: [], channels: [], member_ids: [] };
   const wsOpts = sel => `<option value="">— pick workspace —</option>` + S.workspaces.map(w => `<option value="${w.id}" ${w.id === sel ? 'selected' : ''}>${esc(w.name)}</option>`).join('');
   const contactRow = v => `<input type="text" class="contact" value="${esc(v)}" placeholder="Contact name" style="margin-bottom:6px">`;
-  const SCHED_DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  const channelRow = c => {
-    const s = c.sched || { enabled: false, type: 'weekly', dow: 1, day: 1, day1: 1, day2: 15, time: '09:00' };
-    const dayOpts = (sel) => Array.from({ length: 31 }, (_, i) => `<option value="${i + 1}" ${+sel === i + 1 ? 'selected' : ''}>${i + 1}</option>`).join('');
-    return `<div class="channel-row" style="margin-bottom:12px;border:1px dashed var(--line);border-radius:8px;padding:8px">
+  const sc = p.sched || { enabled: false, type: 'weekly', dow: 1, day: 1, day1: 1, day2: 15, time: '09:00' };
+  const domOpts = sel => Array.from({ length: 31 }, (_, i) => `<option value="${i + 1}" ${+sel === i + 1 ? 'selected' : ''}>${i + 1}</option>`).join('');
+  const channelRow = c => `<div class="channel-row" style="margin-bottom:12px;border:1px dashed var(--line);border-radius:8px;padding:8px">
       <div class="row">
         <input type="text" class="ch-name" value="${esc(c.name || '')}" placeholder="channel-name (label)">
         <select class="ch-ws">${wsOpts(c.workspace_id)}</select>
@@ -251,32 +249,7 @@ function projectForm(p) {
         <button type="button" class="btn-danger ch-del" style="flex:0">✕</button>
       </div>
       <input type="text" class="ch-webhook" value="${esc(c.webhook_url || '')}" placeholder="Webhook URL (recommended): https://hooks.slack.com/services/…" style="margin-top:6px">
-      <div class="ch-sched" style="margin-top:8px;padding-top:8px;border-top:1px solid var(--line)">
-        <label style="display:flex;gap:6px;align-items:center;font-weight:600;color:var(--ink)"><input type="checkbox" class="cs-enabled" ${s.enabled ? 'checked' : ''} style="width:auto"> Automatic schedule for this channel</label>
-        <div class="cs-body" style="margin-top:6px;display:${s.enabled ? 'block' : 'none'}">
-          <div class="row" style="align-items:flex-end;gap:8px">
-            <label class="field" style="margin:0"><span>Frequency</span>
-              <select class="cs-type">
-                <option value="weekly" ${s.type === 'weekly' ? 'selected' : ''}>Weekly</option>
-                <option value="biweekly" ${s.type === 'biweekly' ? 'selected' : ''}>Bi-weekly (1st & 3rd weekday)</option>
-                <option value="monthly" ${s.type === 'monthly' ? 'selected' : ''}>Monthly (one date)</option>
-                <option value="twicedates" ${s.type === 'twicedates' ? 'selected' : ''}>Twice a month (two dates)</option>
-              </select></label>
-            <label class="field cs-dow-wrap" style="margin:0"><span>Weekday</span>
-              <select class="cs-dow">${SCHED_DAYS.map((d, i) => `<option value="${i}" ${+s.dow === i ? 'selected' : ''}>${d}</option>`).join('')}</select></label>
-            <label class="field cs-day-wrap" style="margin:0"><span>Day of month</span>
-              <select class="cs-day">${dayOpts(s.day)}</select></label>
-            <label class="field cs-day1-wrap" style="margin:0"><span>1st date</span>
-              <select class="cs-day1">${dayOpts(s.day1)}</select></label>
-            <label class="field cs-day2-wrap" style="margin:0"><span>2nd date</span>
-              <select class="cs-day2">${dayOpts(s.day2)}</select></label>
-            <label class="field" style="margin:0"><span>Time (PH)</span><input type="time" class="cs-time" value="${esc(s.time || '09:00')}"></label>
-          </div>
-          <p class="muted small" style="margin:4px 0 0">31st automatically becomes the last day in shorter months. Bi-weekly = 1st & 3rd of the chosen weekday.</p>
-        </div>
-      </div>
     </div>`;
-  };
   openModal(`
     <h2>${p.id ? 'Edit project' : 'Add project'}</h2>
     <div class="row">
@@ -293,6 +266,30 @@ function projectForm(p) {
     <label class="field" style="display:flex;gap:8px;align-items:center">
       <input type="checkbox" id="pEmail" ${p.notify_via_email ? 'checked' : ''} style="width:auto">
       <span style="margin:0">No external Slack channel — mark as <strong>Email</strong> (I'll notify the client manually)</span></label>
+    <label class="field"><span>Automatic sending — when this schedule fires, the notice goes to <strong>all</strong> of this project's Slack channels. It skips silently if nobody is out and no holidays apply. You can always still press Send manually.</span>
+      <label style="display:flex;gap:8px;align-items:center;font-weight:600;color:var(--ink);margin:6px 0"><input type="checkbox" id="sEnabled" ${sc.enabled ? 'checked' : ''} style="width:auto"> Enable automatic schedule</label>
+      <div id="schedBody" style="display:${sc.enabled ? 'block' : 'none'}">
+        <div class="row" style="align-items:flex-end;gap:8px">
+          <label class="field" style="margin:0"><span>Frequency</span>
+            <select id="sType">
+              <option value="weekly" ${sc.type === 'weekly' ? 'selected' : ''}>Weekly</option>
+              <option value="biweekly" ${sc.type === 'biweekly' ? 'selected' : ''}>Bi-weekly (1st &amp; 3rd weekday)</option>
+              <option value="monthly" ${sc.type === 'monthly' ? 'selected' : ''}>Monthly (one date)</option>
+              <option value="twicedates" ${sc.type === 'twicedates' ? 'selected' : ''}>Twice a month (two dates)</option>
+            </select></label>
+          <label class="field" id="wrapDow" style="margin:0"><span>Weekday</span>
+            <select id="sDow">${DAYS.map((d, i) => `<option value="${i}" ${+sc.dow === i ? 'selected' : ''}>${d}</option>`).join('')}</select></label>
+          <label class="field" id="wrapDay" style="margin:0"><span>Day of month</span>
+            <select id="sDay">${domOpts(sc.day)}</select></label>
+          <label class="field" id="wrapDay1" style="margin:0"><span>1st date</span>
+            <select id="sDay1">${domOpts(sc.day1)}</select></label>
+          <label class="field" id="wrapDay2" style="margin:0"><span>2nd date</span>
+            <select id="sDay2">${domOpts(sc.day2)}</select></label>
+          <label class="field" style="margin:0"><span>Time (PH)</span><input type="time" id="sTime" value="${esc(sc.time || '09:00')}"></label>
+        </div>
+        <p class="muted small" style="margin:6px 0 0">Bi-weekly means the 1st and 3rd of the chosen weekday. If you pick day 31, months that are shorter fire on their last day instead.</p>
+      </div>
+    </label>
     <label class="field"><span>Team members on this project — from the Team Members section. This is the source of truth: it auto-fills projects on time-off entries and drives the holiday list.</span>
       <div id="pmSelect"></div></label>
     <div class="modal-actions"><button class="btn-ghost" id="mCancel">Cancel</button><button class="btn-primary" id="mSave">Save project</button></div>
@@ -303,27 +300,21 @@ function projectForm(p) {
       placeholder: 'Type a member name to add…',
     });
     $('#addContact', body).onclick = () => $('#contacts', body).insertAdjacentHTML('beforeend', contactRow(''));
-    // Show only the schedule fields relevant to the chosen frequency, per channel row
-    const syncSched = row => {
-      const on = $('.cs-enabled', row).checked;
-      $('.cs-body', row).style.display = on ? 'block' : 'none';
-      const type = $('.cs-type', row).value;
-      const show = (sel, vis) => { const el = $(sel, row); if (el) el.style.display = vis ? '' : 'none'; };
-      show('.cs-dow-wrap', type === 'weekly' || type === 'biweekly');
-      show('.cs-day-wrap', type === 'monthly');
-      show('.cs-day1-wrap', type === 'twicedates');
-      show('.cs-day2-wrap', type === 'twicedates');
-    };
-    const bindSched = () => body.querySelectorAll('.channel-row').forEach(row => {
-      const e = $('.cs-enabled', row), t = $('.cs-type', row);
-      if (e) e.onchange = () => syncSched(row);
-      if (t) t.onchange = () => syncSched(row);
-      syncSched(row);
-    });
-    $('#addChannel', body).onclick = () => { $('#channels', body).insertAdjacentHTML('beforeend', channelRow({})); bindDel(); bindSched(); };
+    $('#addChannel', body).onclick = () => { $('#channels', body).insertAdjacentHTML('beforeend', channelRow({})); bindDel(); };
     const bindDel = () => body.querySelectorAll('.ch-del').forEach(x => x.onclick = () => x.closest('.channel-row').remove());
     bindDel();
-    bindSched();
+    // show only the schedule fields that apply to the chosen frequency
+    const syncSched = () => {
+      $('#schedBody', body).style.display = $('#sEnabled', body).checked ? 'block' : 'none';
+      const t = $('#sType', body).value;
+      $('#wrapDow', body).style.display = (t === 'weekly' || t === 'biweekly') ? '' : 'none';
+      $('#wrapDay', body).style.display = t === 'monthly' ? '' : 'none';
+      $('#wrapDay1', body).style.display = t === 'twicedates' ? '' : 'none';
+      $('#wrapDay2', body).style.display = t === 'twicedates' ? '' : 'none';
+    };
+    $('#sEnabled', body).onchange = syncSched;
+    $('#sType', body).onchange = syncSched;
+    syncSched();
     $('#mCancel', body).onclick = closeModal;
     busyClick($('#mSave', body), async () => {
       const payload = {
@@ -337,17 +328,17 @@ function projectForm(p) {
           workspace_id: +$('.ch-ws', r).value || null,
           purpose: $('.ch-purpose', r).value,
           webhook_url: $('.ch-webhook', r).value.trim(),
-          sched: {
-            enabled: $('.cs-enabled', r).checked,
-            type: $('.cs-type', r).value,
-            dow: +$('.cs-dow', r).value,
-            day: +$('.cs-day', r).value,
-            day1: +$('.cs-day1', r).value,
-            day2: +$('.cs-day2', r).value,
-            time: $('.cs-time', r).value || '09:00',
-          },
         })).filter(c => c.name || c.webhook_url),
         member_ids: pmMs.get(),
+        sched: {
+          enabled: $('#sEnabled', body).checked,
+          type: $('#sType', body).value,
+          dow: +$('#sDow', body).value,
+          day: +$('#sDay', body).value,
+          day1: +$('#sDay1', body).value,
+          day2: +$('#sDay2', body).value,
+          time: $('#sTime', body).value || '09:00',
+        },
       };
       try {
         await (p.id ? api('/projects/' + p.id, 'PUT', payload) : api('/projects', 'POST', payload));
