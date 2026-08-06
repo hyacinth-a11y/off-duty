@@ -242,6 +242,7 @@ function projectForm(p) {
   const sc = p.sched || { enabled: false, type: 'weekly', dow: 1, day: 1, day1: 1, day2: 15, time: '09:00' };
   const domOpts = sel => Array.from({ length: 31 }, (_, i) => `<option value="${i + 1}" ${+sel === i + 1 ? 'selected' : ''}>${i + 1}</option>`).join('');
   const channelRow = c => `<div class="channel-row" style="margin-bottom:12px;border:1px dashed var(--line);border-radius:8px;padding:8px">
+      <input type="hidden" class="ch-id" value="${c.id || ''}">
       <div class="row">
         <input type="text" class="ch-name" value="${esc(c.name || '')}" placeholder="channel-name (label)">
         <select class="ch-ws">${wsOpts(c.workspace_id)}</select>
@@ -324,6 +325,7 @@ function projectForm(p) {
         notify_via_email: $('#pEmail', body).checked,
         contacts: [...body.querySelectorAll('.contact')].map(i => i.value.trim()).filter(Boolean),
         channels: [...body.querySelectorAll('.channel-row')].map(r => ({
+          id: +$('.ch-id', r).value || undefined,
           name: $('.ch-name', r).value.trim().replace(/^#/, ''),
           workspace_id: +$('.ch-ws', r).value || null,
           purpose: $('.ch-purpose', r).value,
