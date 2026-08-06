@@ -67,7 +67,18 @@ function describe(sched) {
   }
 }
 
-async function runDueSchedules(log = () => {}, dry = false) {
+// Only one run at a time. The app's own timer and the external cron ping can
+// arrive together; without this they would both start sending before either
+// marked the day done. A run that arrives while another is in flight simply
+// waits for it and reports its result.
+let inFlight = null;
+function runDueSchedules(log = () => {}, dry = false) {
+  if (inFlight) return inFlight.then(() => ({ skipped: true, note: 'another run was already in progress' }));
+  inFlight = doRun(log, dry).finally(() => { inFlight = null; });
+  return inFlight;
+}
+
+async function doRun(log = () => {}, dry = false) {
   const db = load();
   const tz = db.settings.timezone || 'Asia/Manila';
   const P = partsInTz(new Date(), tz);
@@ -95,12 +106,18 @@ async function runDueSchedules(log = () => {}, dry = false) {
       status.projects.push(line); continue;
     }
 
+    // Claim today BEFORE sending. Sending takes a few seconds, and if the flag
+    // were set afterwards an overlapping run could slip past the check and send
+    // a second copy. If nothing actually got delivered we roll the claim back so
+    // the next ping retries.
+    p.sched_last_sent = today; save();
+
     // Send to ALL of this project's channels.
     const r = await sendProjectNotifications(p.id, new Date(), null, 'auto');
     // Count only real deliveries — the informational "(email — send manually)"
     // line must not mask a failure, or email-marked projects would never retry.
     const delivered = (r.results || []).some(x => x.ok && !x.skipped);
-    if (delivered) { p.sched_last_sent = today; save(); }
+    if (!delivered) { p.sched_last_sent = null; save(); }
     line.note = delivered ? 'sent' : 'all channels failed — will retry next ping';
     line.results = r.results;
     log(`[auto-send] ${p.name}: ${line.note}`);
