@@ -110,28 +110,50 @@ function contentSignature(projectId, now = new Date()) {
   return JSON.stringify({ ooo, hol });
 }
 
+// Remove the line holding `token` plus the heading line directly above it, then
+// tidy the leftover blank lines. Used to drop a whole section when it's empty.
+function dropBlock(text, token) {
+  const lines = text.split('\n');
+  const idx = lines.findIndex(l => l.includes(token));
+  if (idx >= 0) {
+    let from = idx;
+    if (from > 0 && lines[from - 1].trim() !== '') from -= 1; // the heading above it
+    lines.splice(from, idx - from + 1);
+    text = lines.join('\n');
+  }
+  return text.replaceAll(token, '').replace(/\n{3,}/g, '\n\n');
+}
+
 function renderTemplate(template, report) {
   const { project, win, ooo, holidayGroups } = report;
-  // Group by member: one line for a single entry, name + indented date bullets for several
-  let oooList = '• No scheduled time off :tada:';
+
+  let out = template
+    .replaceAll('{project}', project.name)
+    .replaceAll('{month}', win.monthName + (win.extended ? ' (incl. first week of next month)' : ''));
+
+  // ---- time-off block ----
   if (ooo.length) {
+    // Group by member: one line for a single entry, name + indented date bullets for several
     const byMember = new Map();
     for (const t of ooo) {
       if (!byMember.has(t.member_id)) byMember.set(t.member_id, { name: t.member.name, ranges: [] });
       byMember.get(t.member_id).ranges.push(fmtRange(t.start_date, t.end_date));
     }
-    oooList = [...byMember.values()].map(m =>
+    const oooList = [...byMember.values()].map(m =>
       m.ranges.length === 1
         ? `• ${m.name} — ${m.ranges[0]}`
         : `• ${m.name}\n${m.ranges.map(r => `        ◦ ${r}`).join('\n')}`
     ).join('\n');
+    out = out.replaceAll('{ooo_list}', oooList);
+  } else if (holidayGroups.length) {
+    // Nobody is scheduled off, but there ARE holidays to announce — drop the
+    // time-off section entirely rather than saying "no scheduled time off".
+    out = dropBlock(out, '{ooo_list}');
+  } else {
+    out = out.replaceAll('{ooo_list}', '• No scheduled time off :tada:');
   }
 
-  let out = template
-    .replaceAll('{project}', project.name)
-    .replaceAll('{month}', win.monthName + (win.extended ? ' (incl. first week of next month)' : ''))
-    .replaceAll('{ooo_list}', oooList);
-
+  // ---- holiday block ----
   if (holidayGroups.length) {
     const holidayList = holidayGroups.map(g =>
       `• ${fmtDate(g.date)} — ${g.name} (${g.location}): ${g.members.map(m => m.name).join(', ')}`
@@ -139,17 +161,7 @@ function renderTemplate(template, report) {
     const holidayDates = fmtRange(holidayGroups[0].date, holidayGroups[holidayGroups.length - 1].date);
     out = out.replaceAll('{holiday_list}', holidayList).replaceAll('{holiday_dates}', holidayDates);
   } else {
-    // No holidays: drop the {holiday_list} line AND the heading line directly above it
-    const lines = out.split('\n');
-    const idx = lines.findIndex(l => l.includes('{holiday_list}'));
-    if (idx >= 0) {
-      let from = idx;
-      if (from > 0 && lines[from - 1].trim() !== '') from -= 1; // the heading, e.g. "Observing a holiday:"
-      lines.splice(from, idx - from + 1);
-      out = lines.join('\n');
-    }
-    out = out.replaceAll('{holiday_list}', '').replaceAll('{holiday_dates}', '—')
-      .replace(/\n{3,}/g, '\n\n'); // tidy leftover blank lines
+    out = dropBlock(out, '{holiday_list}').replaceAll('{holiday_dates}', '—');
   }
   return out;
 }
