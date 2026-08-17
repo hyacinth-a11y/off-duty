@@ -202,7 +202,10 @@ function renderProjects(main) {
         })()}</td>
         <td class="small contacts-cell" title="${esc(p.contacts.join(', '))}">${p.contacts.length ? esc(p.contacts.slice(0, 2).join(', ')) + (p.contacts.length > 2 ? ` <span class="chip">+${p.contacts.length - 2}</span>` : '') : '—'}</td>
         <td class="row-actions">
-          <button class="btn-ghost act-toggle" title="Actions" aria-label="Actions">⋯</button>
+          <button class="act-toggle" title="Actions" aria-haspopup="true">
+            <span>Options</span>
+            <svg class="act-chev" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
           <div class="act-menu" hidden>
             <button type="button" data-edit="${p.id}">Edit</button>
             <button type="button" data-archive="${p.id}">Archive</button>
@@ -236,7 +239,10 @@ function renderProjects(main) {
     } catch (e) { toast(e.message, true); btn.disabled = false; btn.textContent = '↧ Sync from Jira'; }
   };
   // Row actions dropdown: one open at a time, closes on outside click or Esc
-  const closeMenus = () => main.querySelectorAll('.act-menu').forEach(m => m.hidden = true);
+  const closeMenus = () => main.querySelectorAll('.act-menu').forEach(m => {
+    m.hidden = true;
+    m.previousElementSibling.classList.remove('open');
+  });
   main.querySelectorAll('.act-toggle').forEach(btn => btn.onclick = e => {
     e.stopPropagation();
     const menu = btn.nextElementSibling;
@@ -244,6 +250,7 @@ function renderProjects(main) {
     closeMenus();
     if (wasOpen) return;
     menu.hidden = false;
+    btn.classList.add('open');
     // flip above the button when there isn't room below
     menu.classList.remove('up');
     const r = menu.getBoundingClientRect();
