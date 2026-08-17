@@ -353,3 +353,16 @@ dialog::backdrop { background: rgba(23, 41, 59, 0.45); }
   border-radius: 999px; padding: 1px 9px; font-size: 12px; font-weight: 700; white-space: nowrap;
 }
 .pv-item.needs-attention { border-color: var(--mango); box-shadow: inset 3px 0 0 var(--mango); }
+
+/* ---------- Send Notif: email recipients block ---------- */
+.email-meta {
+  border: 1px solid var(--line); border-radius: 8px;
+  padding: 10px 12px; margin-bottom: 10px; background: var(--hover-bg);
+}
+.em-row { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; padding: 3px 0; }
+.em-label {
+  flex: 0 0 118px; font-size: 12px; font-weight: 700; letter-spacing: 0.03em;
+  text-transform: uppercase; color: var(--ink-soft);
+}
+.em-value { flex: 1; min-width: 200px; word-break: break-word; font-size: 14px; }
+.em-row .recipients { font-family: var(--font-mono); font-size: 13px; }

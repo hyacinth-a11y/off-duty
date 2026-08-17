@@ -616,6 +616,13 @@ async function renderProjectView(main) {
       () => { btn.textContent = 'Copied ✓'; toast('Email text copied — paste it into your email'); },
       () => toast('Copy failed — select the text manually', true));
   });
+  body.querySelectorAll('.email-copy-to').forEach(btn => btn.onclick = e => {
+    e.preventDefault(); e.stopPropagation();
+    const text = btn.closest('.em-row').querySelector('.recipients').textContent.trim();
+    navigator.clipboard.writeText(text).then(
+      () => { btn.textContent = 'Copied ✓'; toast('Recipients copied — paste into the To field'); },
+      () => toast('Copy failed — select the addresses manually', true));
+  });
 }
 
 // Collapsed row: project · #channel · last sent · Send. Click anywhere else to open the preview.
@@ -638,6 +645,11 @@ function channelItem(it) {
 }
 
 function emailItem(it) {
+  // Pull just the address-looking parts out of the contacts (they're sometimes
+  // written as "jane@acme.com - EC" or several addresses in one line).
+  const raw = (it.p.contacts || []).join(', ');
+  const emails = [...new Set(raw.match(/[^\s,;<>()"]+@[^\s,;<>()"]+\.[a-z]{2,}/gi) || [])];
+  const mgr = (it.p.manager || '').trim();
   return `<details class="pv-item">
     <summary>
       <strong>${esc(it.p.name)}</strong>
@@ -646,6 +658,15 @@ function emailItem(it) {
       <button class="btn-ghost email-copy">Copy text</button>
     </summary>
     <div class="pv-item-body">
+      <div class="email-meta">
+        <div class="em-row">
+          <span class="em-label">To (contacts)</span>
+          <span class="em-value recipients">${emails.length ? esc(emails.join(', ')) : '<span class="muted">No contacts added yet — add them in Projects</span>'}</span>
+          ${emails.length ? '<button class="btn-ghost email-copy-to">Copy recipients</button>' : ''}
+        </div>
+        ${mgr ? `<div class="em-row"><span class="em-label">Project manager</span><span class="em-value">${esc(mgr)}</span></div>` : ''}
+        ${raw && emails.length && raw !== emails.join(', ') ? `<div class="em-row"><span class="em-label">As written</span><span class="em-value muted small">${esc(raw)}</span></div>` : ''}
+      </div>
       <div class="slack-msg"><div class="slack-msg-body"><div class="slack-text">${esc(it.text)}</div></div></div>
     </div>
   </details>`;
