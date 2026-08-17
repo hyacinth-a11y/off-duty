@@ -368,7 +368,9 @@ dialog::backdrop { background: rgba(23, 41, 59, 0.45); }
 .em-row .recipients { font-family: var(--font-mono); font-size: 13px; }
 
 /* ---------- row actions dropdown ---------- */
-.row-actions { position: relative; white-space: nowrap; text-align: right; }
+.row-actions { white-space: nowrap; text-align: right; }
+/* the menu anchors to this wrapper (the button), NOT the full-height table cell */
+.act-wrap { position: relative; display: inline-block; }
 .act-toggle {
   display: inline-flex; align-items: center; gap: 7px;
   background: var(--primary); color: #fff; border: none;

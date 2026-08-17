@@ -202,14 +202,16 @@ function renderProjects(main) {
         })()}</td>
         <td class="small contacts-cell" title="${esc(p.contacts.join(', '))}">${p.contacts.length ? esc(p.contacts.slice(0, 2).join(', ')) + (p.contacts.length > 2 ? ` <span class="chip">+${p.contacts.length - 2}</span>` : '') : '—'}</td>
         <td class="row-actions">
-          <button class="act-toggle" title="Actions" aria-haspopup="true">
-            <span>Options</span>
-            <svg class="act-chev" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          </button>
-          <div class="act-menu" hidden>
-            <button type="button" data-edit="${p.id}">Edit</button>
-            <button type="button" data-archive="${p.id}">Archive</button>
-            <button type="button" class="danger" data-del="${p.id}">Delete</button>
+          <div class="act-wrap">
+            <button class="act-toggle" title="Actions" aria-haspopup="true">
+              <span>Options</span>
+              <svg class="act-chev" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <div class="act-menu" hidden>
+              <button type="button" data-edit="${p.id}">Edit</button>
+              <button type="button" data-archive="${p.id}">Archive</button>
+              <button type="button" class="danger" data-del="${p.id}">Delete</button>
+            </div>
           </div>
         </td>
       </tr>`).join('')}
