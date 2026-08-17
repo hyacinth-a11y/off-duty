@@ -169,7 +169,7 @@ function renderProjects(main) {
   // Match by project fields, contacts, channels — AND by any assigned member's name,
   // so typing a person shows every project they're on.
   const memberMatch = p => q && (p.member_ids || []).some(id => memberName(id).toLowerCase().includes(q));
-  const plist = [...S.projects].sort(byName).filter(p =>
+  const plist = [...S.projects].filter(p => !p.archived).sort(byName).filter(p =>
     hit(p.name, p.jira_name, p.manager, (p.contacts || []).join(' '), (p.channels || []).map(c => c.name).join(' ')) || memberMatch(p));
   const isNew = p => p.created_at && (Date.now() - new Date(p.created_at).getTime()) < 7 * 864e5; // added within 7 days
   main.innerHTML = `
@@ -201,7 +201,14 @@ function renderProjects(main) {
           return `${esc(txt)}<br>${esc(s.time || '09:00')}`;
         })()}</td>
         <td class="small contacts-cell" title="${esc(p.contacts.join(', '))}">${p.contacts.length ? esc(p.contacts.slice(0, 2).join(', ')) + (p.contacts.length > 2 ? ` <span class="chip">+${p.contacts.length - 2}</span>` : '') : '—'}</td>
-        <td class="nowrap"><button class="btn-link" data-edit="${p.id}">Edit</button><button class="btn-danger" data-del="${p.id}">Delete</button></td>
+        <td class="row-actions">
+          <button class="btn-ghost act-toggle" title="Actions" aria-label="Actions">⋯</button>
+          <div class="act-menu" hidden>
+            <button type="button" data-edit="${p.id}">Edit</button>
+            <button type="button" data-archive="${p.id}">Archive</button>
+            <button type="button" class="danger" data-del="${p.id}">Delete</button>
+          </div>
+        </td>
       </tr>`).join('')}
       </tbody></table></div>` : `<div class="empty">${noMatch('No projects yet. Add your first project to start building notices.')}</div>`}
     </div>`;
@@ -228,7 +235,31 @@ function renderProjects(main) {
       else { toast(r.error, true); btn.disabled = false; btn.textContent = '↧ Sync from Jira'; }
     } catch (e) { toast(e.message, true); btn.disabled = false; btn.textContent = '↧ Sync from Jira'; }
   };
+  // Row actions dropdown: one open at a time, closes on outside click or Esc
+  const closeMenus = () => main.querySelectorAll('.act-menu').forEach(m => m.hidden = true);
+  main.querySelectorAll('.act-toggle').forEach(btn => btn.onclick = e => {
+    e.stopPropagation();
+    const menu = btn.nextElementSibling;
+    const wasOpen = !menu.hidden;
+    closeMenus();
+    if (wasOpen) return;
+    menu.hidden = false;
+    // flip above the button when there isn't room below
+    menu.classList.remove('up');
+    const r = menu.getBoundingClientRect();
+    if (r.bottom > window.innerHeight - 8) menu.classList.add('up');
+  });
+  main.querySelectorAll('.act-menu').forEach(m => m.onclick = e => e.stopPropagation());
+  document.addEventListener('click', closeMenus);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeMenus(); });
+
   main.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => projectForm(S.projects.find(p => p.id === +b.dataset.edit)));
+  main.querySelectorAll('[data-archive]').forEach(b => b.onclick = async () => {
+    const p = S.projects.find(x => x.id === +b.dataset.archive);
+    if (!confirm(`Archive "${p.name}"?\n\nIt will be hidden from Projects, Send Notif and the time-off picker, and its automatic sending stops. Nothing is deleted — you can restore it any time from Settings.`)) return;
+    await api('/projects/' + b.dataset.archive + '/archive', 'POST');
+    await reload('Archived — restore it from Settings');
+  });
   main.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
     if (!confirm('Delete this project? Its schedules and time-off links will be removed too.')) return;
     await api('/projects/' + b.dataset.del, 'DELETE'); await reload('Deleted');
@@ -485,14 +516,14 @@ function renderTimeoff(main) {
     `, body => {
       bindDateFields(body);
       const tpMs = multiSelect($('#tpSelect', body), {
-        options: [...S.projects].sort(byName).map(p => ({ id: p.id, label: p.name, sub: p.jira_name || '' })),
+        options: [...S.projects].filter(p => !p.archived).sort(byName).map(p => ({ id: p.id, label: p.name, sub: p.jira_name || '' })),
         selected: t.project_ids || [],
         placeholder: 'Type a project name to add…',
       });
       // When a member is chosen, select the projects they belong to (from the Projects section rosters)
       $('#tMember', body).onchange = e => {
         const mid = +e.target.value;
-        tpMs.set(S.projects.filter(p => (p.member_ids || []).includes(mid)).map(p => p.id));
+        tpMs.set(S.projects.filter(p => !p.archived && (p.member_ids || []).includes(mid)).map(p => p.id));
       };
       $('#mCancel', body).onclick = closeModal;
       busyClick($('#mSave', body), async () => {
@@ -548,6 +579,7 @@ async function renderProjectView(main) {
   // requests that came in since the last send.
   const items = [];
   S.projects.forEach((p, i) => {
+    if (p.archived) return; // archived projects don't appear here
     const rep = reports[i], prev = previews[i];
     if (!rep || !prev || (!rep.ooo.length && !rep.holidayGroups.length)) return;
     if (!hit(p.name, (p.channels || []).map(c => c.name).join(' '))) return;
@@ -677,6 +709,22 @@ function renderSettings(main) {
   main.innerHTML = `
     <div class="section-head"><h1>Settings</h1><p>Slack workspaces, Jira, notification templates, and the scheduler timezone.</p></div>
 
+    <div class="card"><h2>Archived projects</h2>
+      ${(() => {
+        const arc = [...S.projects].filter(p => p.archived).sort(byName);
+        if (!arc.length) return '<div class="empty">No archived projects. Use <strong>Archive</strong> on a project to park it here.</div>';
+        return `<p class="muted small">These are hidden from Projects, Send Notif and the time-off picker, and never send automatically. Restore brings a project back exactly as it was.</p>
+        <table><thead><tr><th>Project</th><th>Channels</th><th>Archived</th><th></th></tr></thead><tbody>
+        ${arc.map(p => `<tr>
+          <td><strong>${esc(p.name)}</strong></td>
+          <td class="small">${(p.channels || []).length ? p.channels.map(c => `#${esc(c.name)}`).join(', ') : '<span class="muted">none</span>'}</td>
+          <td class="small">${p.archived_at ? esc(fmtDT(p.archived_at)) : '—'}</td>
+          <td class="nowrap"><button class="btn-link" data-restore="${p.id}">Restore</button><button class="btn-danger" data-arcdel="${p.id}">Delete</button></td>
+        </tr>`).join('')}
+        </tbody></table>`;
+      })()}
+    </div>
+
     <div class="card"><h2>Jira connection</h2>
       <div id="jiraStatus" class="muted small">Checking…</div>
       <p class="muted small" style="margin-top:8px">Connects to your onboarding project so <strong>Sync from Jira</strong> (in the Projects section) can import new tickets as projects. Set up on the server with <span class="mono">JIRA_BASE_URL</span>, <span class="mono">JIRA_EMAIL</span>, and <span class="mono">JIRA_TOKEN</span> (get a token at id.atlassian.com → Security → API tokens).</p>
@@ -715,6 +763,16 @@ function renderSettings(main) {
         closeModal(); await reload('Workspace saved');
       } catch (e) { toast(e.message, true); }
     });
+  });
+  main.querySelectorAll('[data-restore]').forEach(b => b.onclick = async () => {
+    await api('/projects/' + b.dataset.restore + '/restore', 'POST');
+    await reload('Restored — it\u2019s back in Projects');
+  });
+  main.querySelectorAll('[data-arcdel]').forEach(b => b.onclick = async () => {
+    const p = S.projects.find(x => x.id === +b.dataset.arcdel);
+    if (!confirm(`Permanently delete "${p.name}"?\n\nThis cannot be undone. Its channels and time-off links are removed.`)) return;
+    await api('/projects/' + b.dataset.arcdel, 'DELETE');
+    await reload('Deleted permanently');
   });
   api('/jira/status').then(s => {
     const el = $('#jiraStatus');
