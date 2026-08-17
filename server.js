@@ -144,6 +144,24 @@ app.delete('/api/projects/:id', (req, res) => {
   save(); ok(res);
 });
 
+// Archive / restore. Archiving hides a project from the day-to-day sections and
+// stops its automatic sending, but keeps all of its data so it can be restored.
+app.post('/api/projects/:id/archive', (req, res) => {
+  const p = db().projects.find(x => x.id === +req.params.id);
+  if (!p) return res.status(404).json({ error: 'Project not found' });
+  p.archived = true;
+  p.archived_at = new Date().toISOString();
+  save(); ok(res, p);
+});
+
+app.post('/api/projects/:id/restore', (req, res) => {
+  const p = db().projects.find(x => x.id === +req.params.id);
+  if (!p) return res.status(404).json({ error: 'Project not found' });
+  p.archived = false;
+  p.archived_at = null;
+  save(); ok(res, p);
+});
+
 // ---------------- members (Section 2) ----------------
 const STATUSES = ['PH Employee', 'US Employee', 'Contractor'];
 app.get('/api/members', (req, res) => ok(res, db().members));

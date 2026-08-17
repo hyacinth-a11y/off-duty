@@ -86,6 +86,7 @@ async function doRun(log = () => {}, dry = false) {
   const status = { checked_at: `${today} ${P.hm} (${tz})`, mode: dry ? 'DRY RUN — nothing sent' : 'live', projects: [] };
 
   for (const p of db.projects) {
+    if (p.archived) continue; // archived projects never send
     const sched = p.sched;
     if (!sched || !sched.enabled) continue; // no schedule on this project
     const line = { project: p.name, schedule: describe(sched) };
