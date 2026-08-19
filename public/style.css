@@ -30,7 +30,8 @@ body {
   position: sticky; top: 0; z-index: 10; flex-wrap: wrap;
 }
 .brand { display: flex; align-items: center; gap: 8px; }
-.brand-mark { color: var(--primary); font-size: 22px; line-height: 1; }
+.brand-mark { color: var(--primary); display: inline-flex; align-items: center; line-height: 1; }
+.brand-mark svg { display: block; }
 .brand-name { font-family: var(--font-display); font-weight: 700; font-size: 19px; letter-spacing: -0.02em; }
 .nav { display: flex; align-items: center; gap: 8px; }
 .nav-label { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-soft); }
@@ -402,3 +403,20 @@ dialog::backdrop { background: rgba(23, 41, 59, 0.45); }
 [data-theme="dark"] .act-menu button.danger:hover { background: #3a2224; }
 /* actions column needs room for the labelled button */
 .projects-table th:nth-child(7), .projects-table td:nth-child(7) { width: 11%; }
+
+/* ---------- grouped lists (Time-Off Entries) ---------- */
+.group-block { margin-bottom: 14px; }
+.group-block > summary {
+  cursor: pointer; list-style: none; user-select: none;
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 8px 4px; font-family: var(--font-display);
+  font-size: 16px; font-weight: 600; color: var(--ink);
+}
+.group-block > summary::-webkit-details-marker { display: none; }
+.group-block > summary::before {
+  content: "▸"; font-size: 11px; color: var(--ink-soft);
+  transition: transform 0.15s ease; flex-shrink: 0;
+}
+.group-block[open] > summary::before { transform: rotate(90deg); }
+.group-block > summary:hover { color: var(--primary-ink); }
+.group-card { margin-top: 2px; margin-bottom: 0; padding: 4px 14px; }
