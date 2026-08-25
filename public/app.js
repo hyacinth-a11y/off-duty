@@ -480,13 +480,66 @@ function renderHolidays(main) {
 /* ============================ TIME OFF ============================ */
 function renderTimeoff(main) {
   const sortMode = S._toSort || 'date';
+  const groupMode = S._toGroup || 'none';
   const rows = S.timeoffs.filter(t => hit(memberName(t.member_id), t.project_ids.map(projectName).join(' '))).sort(sortMode === 'name'
     ? (a, b) => memberName(a.member_id).localeCompare(memberName(b.member_id), undefined, { sensitivity: 'base' }) || a.start_date.localeCompare(b.start_date)
     : (a, b) => a.start_date.localeCompare(b.start_date) || memberName(a.member_id).localeCompare(memberName(b.member_id)));
+
+  // One row renderer for every view. `skip` hides the column the list is grouped by.
+  const rowHtml = (t, skip) => `<tr>
+    ${skip === 'member' ? '' : `<td><strong>${esc(memberName(t.member_id))}</strong></td>`}
+    <td class="nowrap">${fmtRange(t.start_date, t.end_date)}</td>
+    ${skip === 'project' ? '' : `<td>${t.project_ids.map(id => `<span class="chip">${esc(projectName(id))}</span>`).join(' ') || '<span class="muted small">—</span>'}</td>`}
+    <td><span class="badge ${t.status}">${t.status === 'approved' ? 'Approved' : 'Pending approval'}</span></td>
+    <td class="small muted">${esc(t.note) || ''}</td>
+    <td class="nowrap"><button class="btn-link" data-edit="${t.id}">Edit</button><button class="btn-danger" data-del="${t.id}">Delete</button></td>
+  </tr>`;
+  const tableHtml = (list, skip) => `<table><thead><tr>
+    ${skip === 'member' ? '' : '<th>Member</th>'}<th>Dates</th>${skip === 'project' ? '' : '<th>Projects</th>'}<th>Status</th><th>Note</th><th></th>
+  </tr></thead><tbody>${list.map(t => rowHtml(t, skip)).join('')}</tbody></table>`;
+
+  // Build the grouped buckets when grouping is on
+  let bodyHtml;
+  if (!rows.length) {
+    bodyHtml = `<div class="card"><div class="empty">${noMatch('No time-off entries yet. Only <strong>approved</strong> entries appear in Slack notices.')}</div></div>`;
+  } else if (groupMode === 'none') {
+    bodyHtml = `<div class="card">${tableHtml(rows, null)}</div>`;
+  } else {
+    const map = new Map();
+    for (const t of rows) {
+      const keys = groupMode === 'member'
+        ? [t.member_id]
+        : (t.project_ids.length ? t.project_ids : [null]); // an entry shows under each of its projects
+      for (const k of keys) {
+        if (!map.has(k)) map.set(k, []);
+        map.get(k).push(t);
+      }
+    }
+    const label = k => k === null ? 'No project assigned' : (groupMode === 'member' ? memberName(k) : projectName(k));
+    const groups = [...map.entries()]
+      .map(([k, items]) => ({ k, items, label: label(k) }))
+      .sort((a, b) => (a.k === null) - (b.k === null) || a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }));
+    bodyHtml = groups.map(g => {
+      const approved = g.items.filter(t => t.status === 'approved').length;
+      return `<details class="group-block" open>
+        <summary>${esc(g.label)}
+          <span class="muted small">— ${g.items.length} ${g.items.length === 1 ? 'entry' : 'entries'}${approved ? ` · ${approved} approved` : ''}</span>
+        </summary>
+        <div class="card group-card">${tableHtml(g.items, groupMode)}</div>
+      </details>`;
+    }).join('');
+  }
+
   main.innerHTML = `
     <div class="section-head">
       <h1>Time-Off Entries</h1><p>The source of truth for requests. Members come from Team Members; projects come from Projects.</p>
       <span class="spacer"></span>
+      <label class="small muted" style="display:flex;align-items:center;gap:6px">Group by
+        <select id="toGroup" style="width:auto">
+          <option value="none" ${groupMode === 'none' ? 'selected' : ''}>Nothing (flat list)</option>
+          <option value="member" ${groupMode === 'member' ? 'selected' : ''}>Member</option>
+          <option value="project" ${groupMode === 'project' ? 'selected' : ''}>Project</option>
+        </select></label>
       <label class="small muted" style="display:flex;align-items:center;gap:6px">Sort by
         <select id="toSort" style="width:auto">
           <option value="date" ${sortMode === 'date' ? 'selected' : ''}>Time-off date (earliest first)</option>
@@ -494,18 +547,9 @@ function renderTimeoff(main) {
         </select></label>
       <button class="btn-primary" id="addTo">Add time-off entry</button>
     </div>
-    <div class="card">
-      ${rows.length ? `<table><thead><tr><th>Member</th><th>Dates</th><th>Projects</th><th>Status</th><th>Note</th><th></th></tr></thead><tbody>
-      ${rows.map(t => `<tr>
-        <td><strong>${esc(memberName(t.member_id))}</strong></td>
-        <td>${fmtRange(t.start_date, t.end_date)}</td>
-        <td>${t.project_ids.map(id => `<span class="chip">${esc(projectName(id))}</span>`).join(' ') || '<span class="muted small">—</span>'}</td>
-        <td><span class="badge ${t.status}">${t.status === 'approved' ? 'Approved' : 'Pending approval'}</span></td>
-        <td class="small muted">${esc(t.note) || ''}</td>
-        <td><button class="btn-link" data-edit="${t.id}">Edit</button><button class="btn-danger" data-del="${t.id}">Delete</button></td>
-      </tr>`).join('')}</tbody></table>` : `<div class="empty">${noMatch('No time-off entries yet. Only <strong>approved</strong> entries appear in Slack notices.')}</div>`}
-    </div>
+    ${bodyHtml}
     <p class="muted small">Heads-up: only entries marked <strong>Approved</strong> are included in Slack notifications. If someone isn't in the member dropdown, add them under Team Members first.</p>`;
+
   const form = t => {
     t = t || { member_id: '', start_date: '', end_date: '', status: 'pending', project_ids: [], note: '' };
     if (!S.members.length) return toast('Add team members first (Team Members section)', true);
@@ -552,6 +596,7 @@ function renderTimeoff(main) {
     });
   };
   $('#toSort').onchange = e => { S._toSort = e.target.value; renderTimeoff(main); };
+  $('#toGroup').onchange = e => { S._toGroup = e.target.value; renderTimeoff(main); };
   $('#addTo').onclick = () => form();
   main.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => form(S.timeoffs.find(t => t.id === +b.dataset.edit)));
   main.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => { await api('/timeoffs/' + b.dataset.del, 'DELETE'); await reload('Deleted'); });
@@ -801,7 +846,181 @@ function renderSettings(main) {
 }
 
 /* ============================ router ============================ */
-const SECTIONS = { projects: renderProjects, members: renderMembers, holidays: renderHolidays, timeoff: renderTimeoff, projectview: renderProjectView, settings: renderSettings };
+
+/* ============================ WHO'S OUT (CALENDAR) ============================ */
+const HOLIDAY_STATUS = { 'PH Employee': 'PH', 'US Employee': 'US' }; // contractors observe none
+const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
+
+// Colour per member so the same person reads the same everywhere on the grid
+const CAL_COLORS = ['#2f7d95', '#b4632a', '#5c6bc0', '#2e8b6a', '#a1467e', '#7a6b2f', '#c05555', '#3f7a3f'];
+const memberColor = id => CAL_COLORS[Math.abs(Number(id) || 0) % CAL_COLORS.length];
+
+const isoOf = dt => `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`;
+const parseIso = s => { const [y, m, d] = s.split('-').map(Number); return new Date(Date.UTC(y, m - 1, d)); };
+const addDays = (dt, n) => new Date(dt.getTime() + n * 86400000);
+// "today" in the app's configured timezone, not the browser's
+function todayIso() {
+  const tz = (S.settings && S.settings.timezone) || 'Asia/Manila';
+  const p = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  return p; // en-CA gives YYYY-MM-DD
+}
+
+// Everyone out on a given date: approved time-off + holidays their status observes
+function outOn(iso) {
+  const q = Q();
+  const people = [];
+  for (const t of S.timeoffs) {
+    if (t.status !== 'approved') continue;
+    if (iso < t.start_date || iso > t.end_date) continue;
+    const name = memberName(t.member_id);
+    const projects = (t.project_ids || []).map(projectName);
+    if (q && !(name.toLowerCase().includes(q) || projects.join(' ').toLowerCase().includes(q))) continue;
+    people.push({ kind: 'off', id: t.member_id, name, projects, note: t.note || '' });
+  }
+  const hols = [];
+  for (const h of S.holidays) {
+    if (h.date !== iso) continue;
+    const observers = S.members.filter(m => HOLIDAY_STATUS[m.status] === h.location);
+    const shown = q ? observers.filter(m => m.name.toLowerCase().includes(q)) : observers;
+    if (!shown.length) continue;
+    hols.push({ name: h.name, location: h.location, members: shown });
+  }
+  return { people, hols };
+}
+
+function renderCalendar(main) {
+  const view = S._calView || 'month';
+  const anchor = S._calAnchor || todayIso();          // any date inside the shown range
+  const today = todayIso();
+  const a = parseIso(anchor);
+
+  // Work out the visible range + heading for each view
+  let start, end, heading;
+  if (view === 'month') {
+    start = new Date(Date.UTC(a.getUTCFullYear(), a.getUTCMonth(), 1));
+    end = new Date(Date.UTC(a.getUTCFullYear(), a.getUTCMonth() + 1, 0));
+    heading = `${cap(MONTH_NAMES[a.getUTCMonth()])} ${a.getUTCFullYear()}`;
+  } else if (view === 'week') {
+    start = addDays(a, -a.getUTCDay());               // back to Sunday
+    end = addDays(start, 6);
+    heading = `${fmt(isoOf(start))} — ${fmt(isoOf(end))}`;
+  } else {
+    start = end = a;
+    heading = isoOf(a) === today ? `Today · ${fmt(isoOf(a))}` : fmt(isoOf(a));
+  }
+
+  const step = view === 'month' ? 'month' : view === 'week' ? 7 : 1;
+  const shift = dir => {
+    const d = parseIso(S._calAnchor || todayIso());
+    if (step === 'month') S._calAnchor = isoOf(new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + dir, 1)));
+    else S._calAnchor = isoOf(addDays(d, dir * step));
+    renderCalendar(main);
+  };
+
+  main.innerHTML = `
+    <div class="section-head">
+      <h1>Who's Out</h1><p>Approved time-off and observed holidays, plotted on a calendar.</p>
+      <span class="spacer"></span>
+      <div class="cal-views">
+        ${['month', 'week', 'today'].map(v => `<button class="cal-view ${view === v ? 'active' : ''}" data-view="${v}">${v[0].toUpperCase() + v.slice(1)}</button>`).join('')}
+      </div>
+    </div>
+    <div class="card">
+      <div class="cal-bar">
+        <button class="btn-ghost cal-nav" data-dir="-1" title="Previous">‹</button>
+        <button class="btn-ghost" id="calToday">Today</button>
+        <button class="btn-ghost cal-nav" data-dir="1" title="Next">›</button>
+        <h2 class="cal-heading">${esc(heading)}</h2>
+        <span class="spacer"></span>
+        <span class="cal-legend"><span class="dot off"></span> time-off <span class="dot hol"></span> holiday</span>
+      </div>
+      <div id="calBody"></div>
+    </div>`;
+
+  const body = $('#calBody');
+  if (view === 'today') body.innerHTML = dayPanel(isoOf(a), today);
+  else if (view === 'week') body.innerHTML = weekGrid(start, today);
+  else body.innerHTML = monthGrid(start, end, today);
+
+  main.querySelectorAll('.cal-view').forEach(b => b.onclick = () => { S._calView = b.dataset.view; renderCalendar(main); });
+  main.querySelectorAll('.cal-nav').forEach(b => b.onclick = () => shift(+b.dataset.dir));
+  $('#calToday').onclick = () => { S._calAnchor = todayIso(); renderCalendar(main); };
+  // clicking a day in month/week view opens that day
+  main.querySelectorAll('[data-day]').forEach(c => c.onclick = () => {
+    S._calAnchor = c.dataset.day; S._calView = 'today'; renderCalendar(main);
+  });
+}
+
+// chips shown inside a month/week cell
+function cellChips(iso, compact) {
+  const { people, hols } = outOn(iso);
+  if (!people.length && !hols.length) return '';
+  const max = compact ? 3 : 6;
+  const chips = people.slice(0, max).map(p =>
+    `<span class="cal-chip" style="--c:${memberColor(p.id)}" title="${esc(p.name)}${p.projects.length ? ' — ' + esc(p.projects.join(', ')) : ''}">${esc(p.name)}</span>`).join('');
+  const more = people.length > max ? `<span class="cal-more">+${people.length - max} more</span>` : '';
+  const hol = hols.map(h => `<span class="cal-chip hol" title="${esc(h.members.map(m => m.name).join(', '))}">${esc(h.name)} (${esc(h.location)})</span>`).join('');
+  return hol + chips + more;
+}
+
+function monthGrid(start, end, today) {
+  const lead = start.getUTCDay();                 // blanks before the 1st
+  const days = end.getUTCDate();
+  const cells = [];
+  for (let i = 0; i < lead; i++) cells.push('<div class="cal-cell empty"></div>');
+  for (let d = 1; d <= days; d++) {
+    const iso = isoOf(new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), d)));
+    const { people, hols } = outOn(iso);
+    const n = people.length;
+    cells.push(`<div class="cal-cell${iso === today ? ' today' : ''}${n || hols.length ? ' has' : ''}" data-day="${iso}">
+      <div class="cal-daynum">${d}${n ? `<span class="cal-count">${n}</span>` : ''}</div>
+      <div class="cal-chips">${cellChips(iso, true)}</div>
+    </div>`);
+  }
+  while (cells.length % 7) cells.push('<div class="cal-cell empty"></div>');
+  return `<div class="cal-grid">
+    ${DAYS.map(d => `<div class="cal-dow">${d.slice(0, 3)}</div>`).join('')}
+    ${cells.join('')}
+  </div>`;
+}
+
+function weekGrid(start, today) {
+  const cells = [];
+  for (let i = 0; i < 7; i++) {
+    const dt = addDays(start, i);
+    const iso = isoOf(dt);
+    const { people, hols } = outOn(iso);
+    cells.push(`<div class="cal-cell tall${iso === today ? ' today' : ''}${people.length || hols.length ? ' has' : ''}" data-day="${iso}">
+      <div class="cal-daynum">${DAYS[dt.getUTCDay()].slice(0, 3)} ${dt.getUTCDate()}${people.length ? `<span class="cal-count">${people.length}</span>` : ''}</div>
+      <div class="cal-chips">${cellChips(iso, false) || '<span class="muted small">—</span>'}</div>
+    </div>`);
+  }
+  return `<div class="cal-grid week">${cells.join('')}</div>`;
+}
+
+function dayPanel(iso, today) {
+  const { people, hols } = outOn(iso);
+  if (!people.length && !hols.length) {
+    return `<div class="empty">${Q() ? `No matches for "${esc(S._q.trim())}" on this day.` : `Everyone is in on ${fmt(iso)}. 🎉`}</div>`;
+  }
+  const holBlock = hols.map(h => `<div class="day-row hol">
+      <div class="day-name">${esc(h.name)} <span class="chip">${esc(h.location)} holiday</span></div>
+      <div class="day-sub">${esc(h.members.map(m => m.name).join(', '))}</div>
+    </div>`).join('');
+  const offBlock = people.map(p => `<div class="day-row">
+      <span class="day-swatch" style="background:${memberColor(p.id)}"></span>
+      <div>
+        <div class="day-name">${esc(p.name)}</div>
+        <div class="day-sub">${p.projects.length ? p.projects.map(x => `<span class="chip">${esc(x)}</span>`).join(' ') : '<span class="muted">no project assigned</span>'}${p.note ? ` · ${esc(p.note)}` : ''}</div>
+      </div>
+    </div>`).join('');
+  return `<div class="day-panel">
+    <p class="muted small">${people.length} out${hols.length ? ` · ${hols.length} holiday` : ''}${iso === today ? ' · today' : ''}</p>
+    ${holBlock}${offBlock}
+  </div>`;
+}
+
+const SECTIONS = { projects: renderProjects, members: renderMembers, holidays: renderHolidays, timeoff: renderTimeoff, calendar: renderCalendar, projectview: renderProjectView, settings: renderSettings };
 let current = 'projectview';
 async function show(section, fresh = false) {
   current = section;
