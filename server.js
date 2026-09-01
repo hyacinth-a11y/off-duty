@@ -293,17 +293,22 @@ app.delete('/api/schedules/:id', (req, res) => {
 app.all('/api/cron', async (req, res) => {
   if (!process.env.CRON_KEY) return res.status(503).json({ error: 'CRON_KEY is not set on the server' });
   if ((req.query.key || '') !== process.env.CRON_KEY) return res.status(403).json({ error: 'Wrong or missing key' });
-  try {
-    const { runDueSchedules } = require('./scheduler');
-    const dry = req.query.dry === '1';
-    const report = await runDueSchedules(console.log, dry);
-    // Keep the HTTP response TINY by default. cron-job.org rejects large responses
-    // ("Response data too big") and will auto-disable the job. The full report is
-    // still returned when you ask for it with &verbose=1 (or on a dry run).
-    if (dry || req.query.verbose === '1') return ok(res, report);
-    const sent = (report.channels || []).filter(c => c.note === 'sent').length;
-    res.json({ ok: true, sent });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  const dry = req.query.dry === '1';
+  const verbose = req.query.verbose === '1';
+  const { runDueSchedules } = require('./scheduler');
+
+  // When YOU ask for a report (dry run or verbose) we wait and return it.
+  if (dry || verbose) {
+    try { return ok(res, await runDueSchedules(console.log, dry)); }
+    catch (e) { return res.status(500).json({ error: e.message }); }
+  }
+
+  // Normal pings from cron-job.org: answer straight away. Sending can take far
+  // longer than the pinger's 30s timeout (Slack calls are paced 1.2s apart), and
+  // a timeout counts as a failure — enough failures and the job gets disabled.
+  // The scheduler's own lock stops overlapping runs, so this is safe.
+  res.json({ ok: true, queued: true });
+  runDueSchedules(console.log, false).catch(e => console.error('[auto-send] error:', e.message));
 });
 
 // ---------------- Jira sync ----------------

@@ -17,7 +17,7 @@
 //
 // Triggers: the in-process loop below, and GET /api/cron?key=… from an external
 // pinger (cron-job.org). Add &dry=1 to preview without sending.
-const { load, save } = require('./db');
+const { load, save, saveNow } = require('./db');
 const { sendProjectNotifications, projectReport, partsInTz } = require('./notify');
 
 const pad = n => String(n).padStart(2, '0');
@@ -111,14 +111,14 @@ async function doRun(log = () => {}, dry = false) {
     // were set afterwards an overlapping run could slip past the check and send
     // a second copy. If nothing actually got delivered we roll the claim back so
     // the next ping retries.
-    p.sched_last_sent = today; save();
+    p.sched_last_sent = today; await saveNow();
 
     // Send to ALL of this project's channels.
     const r = await sendProjectNotifications(p.id, new Date(), null, 'auto');
     // Count only real deliveries — the informational "(email — send manually)"
     // line must not mask a failure, or email-marked projects would never retry.
     const delivered = (r.results || []).some(x => x.ok && !x.skipped);
-    if (!delivered) { p.sched_last_sent = null; save(); }
+    if (!delivered) { p.sched_last_sent = null; await saveNow(); }
     line.note = delivered ? 'sent' : 'all channels failed — will retry next ping';
     line.results = r.results;
     log(`[auto-send] ${p.name}: ${line.note}`);
