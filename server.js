@@ -12,6 +12,7 @@ app.use(express.json());
 if (process.env.APP_PASSWORD) {
   app.use((req, res, next) => {
     if (req.path === '/api/cron') return next(); // guarded by its own CRON_KEY below
+    if (req.path === '/api/calendar.ics') return next(); // guarded by its own feed key below
     const hdr = req.headers.authorization || '';
     const [, b64] = hdr.split(' ');
     const pass = b64 ? Buffer.from(b64, 'base64').toString().split(':').slice(1).join(':') : '';
@@ -290,6 +291,22 @@ app.delete('/api/schedules/:id', (req, res) => {
 // GET /api/cron?key=CRON_KEY on a schedule. This wakes the app on free hosting
 // and fires any schedules that are due today and not yet sent. Safe to ping
 // repeatedly — each schedule sends at most once per day.
+// Subscribable calendar feed for Google/Outlook/Apple Calendar.
+// Guarded by FEED_KEY (or CRON_KEY if that isn't set) since calendar apps can't
+// sign in past the app password.
+app.get('/api/calendar.ics', (req, res) => {
+  const { buildIcs, feedKey } = require('./ics');
+  const key = feedKey();
+  if (!key) return res.status(503).type('text/plain').send('No FEED_KEY or CRON_KEY set on the server');
+  if ((req.query.key || '') !== key) return res.status(403).type('text/plain').send('Wrong or missing key');
+  try {
+    res.set('Content-Type', 'text/calendar; charset=utf-8');
+    res.set('Content-Disposition', 'inline; filename="off-duty.ics"');
+    res.set('Cache-Control', 'public, max-age=1800');
+    res.send(buildIcs());
+  } catch (e) { res.status(500).type('text/plain').send(e.message); }
+});
+
 app.all('/api/cron', async (req, res) => {
   if (!process.env.CRON_KEY) return res.status(503).json({ error: 'CRON_KEY is not set on the server' });
   if ((req.query.key || '') !== process.env.CRON_KEY) return res.status(403).json({ error: 'Wrong or missing key' });
