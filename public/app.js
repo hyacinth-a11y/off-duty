@@ -170,7 +170,15 @@ function renderProjects(main) {
   // so typing a person shows every project they're on.
   const memberMatch = p => q && (p.member_ids || []).some(id => memberName(id).toLowerCase().includes(q));
   const plist = [...S.projects].filter(p => !p.archived).sort(byName).filter(p =>
-    hit(p.name, p.jira_name, p.manager, (p.contacts || []).join(' '), (p.channels || []).map(c => c.name).join(' ')) || memberMatch(p));
+    hit(
+      p.name,
+      p.jira_name,
+      p.manager,
+      (p.contacts || []).join(' '),
+      (p.channels || []).map(c => c.name).join(' '),
+      // the workspace each channel posts to, e.g. "AppEvolve" / "nClouds"
+      [...new Set((p.channels || []).map(c => wsName(c.workspace_id)))].join(' ')
+    ) || memberMatch(p));
   const isNew = p => p.created_at && (Date.now() - new Date(p.created_at).getTime()) < 7 * 864e5; // added within 7 days
   main.innerHTML = `
     <div class="section-head">
