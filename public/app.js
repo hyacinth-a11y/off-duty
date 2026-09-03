@@ -553,6 +553,7 @@ function renderTimeoff(main) {
           <option value="date" ${sortMode === 'date' ? 'selected' : ''}>Time-off date (earliest first)</option>
           <option value="name" ${sortMode === 'name' ? 'selected' : ''}>Member name (A–Z)</option>
         </select></label>
+      <button class="btn-ghost" id="bambooSync" title="Import approved time-off from BambooHR">↧ Sync from BambooHR</button>
       <button class="btn-primary" id="addTo">Add time-off entry</button>
     </div>
     ${bodyHtml}
@@ -605,6 +606,32 @@ function renderTimeoff(main) {
   };
   $('#toSort').onchange = e => { S._toSort = e.target.value; renderTimeoff(main); };
   $('#toGroup').onchange = e => { S._toGroup = e.target.value; renderTimeoff(main); };
+  $('#bambooSync').onclick = async () => {
+    const btn = $('#bambooSync'); if (btn.disabled) return;
+    btn.disabled = true; btn.textContent = 'Checking BambooHR…';
+    const reset = () => { btn.disabled = false; btn.textContent = '↧ Sync from BambooHR'; };
+    try {
+      const status = await api('/bamboo/status');
+      if (!status.configured) { toast('BambooHR isn\u2019t connected yet — add the settings in Render first', true); return reset(); }
+      const p = await api('/bamboo/sync?dry=1', 'POST');
+      if (!p.ok) { toast(p.error, true); return reset(); }
+      const c = p.counts;
+      if (!c.created && !c.updated && !c.removed) {
+        toast(`Already up to date${c.unmatched ? ` \u00b7 ${c.unmatched} BambooHR name(s) aren\u2019t in Team Members` : ''}`);
+        return reset();
+      }
+      const lines = [];
+      if (c.created) lines.push(`ADD (${c.created}):\n` + p.created.slice(0, 12).map(x => '  \u2022 ' + x).join('\n') + (c.created > 12 ? `\n  …and ${c.created - 12} more` : ''));
+      if (c.updated) lines.push(`UPDATE (${c.updated}):\n` + p.updated.slice(0, 8).map(x => '  \u2022 ' + x).join('\n'));
+      if (c.removed) lines.push(`REMOVE — cancelled in BambooHR (${c.removed}):\n` + p.removed.slice(0, 8).map(x => '  \u2022 ' + x).join('\n'));
+      if (c.unmatched) lines.push(`IGNORED — not in your Team Members (${c.unmatched}):\n` + p.unmatched.slice(0, 10).map(x => '  \u2022 ' + x).join('\n'));
+      if (!confirm(`Sync ${p.window} from BambooHR?\n\n${lines.join('\n\n')}\n\nOnly entries that came from BambooHR are changed — anything you typed by hand is left alone.`)) return reset();
+      btn.textContent = 'Syncing…';
+      const r = await api('/bamboo/sync', 'POST');
+      if (r.ok) await reload(`BambooHR: ${r.counts.created} added, ${r.counts.updated} updated, ${r.counts.removed} removed`);
+      else { toast(r.error, true); reset(); }
+    } catch (e) { toast(e.message, true); reset(); }
+  };
   $('#addTo').onclick = () => form();
   main.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => form(S.timeoffs.find(t => t.id === +b.dataset.edit)));
   main.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => { await api('/timeoffs/' + b.dataset.del, 'DELETE'); await reload('Deleted'); });
@@ -787,6 +814,11 @@ function renderSettings(main) {
       })()}
     </div>
 
+    <div class="card"><h2>BambooHR connection</h2>
+      <div id="bambooStatus" class="muted small">Checking…</div>
+      <p class="muted small" style="margin-top:8px">Imports approved time-off so it doesn't have to be entered twice. <strong>Only people in your Team Members list are synced</strong> — that list is the filter. Set up on the server with <span class="mono">BAMBOO_SUBDOMAIN</span> and <span class="mono">BAMBOO_API_KEY</span> (BambooHR → your name → API Keys).</p>
+    </div>
+
     <div class="card"><h2>Jira connection</h2>
       <div id="jiraStatus" class="muted small">Checking…</div>
       <p class="muted small" style="margin-top:8px">Connects to your onboarding project so <strong>Sync from Jira</strong> (in the Projects section) can import new tickets as projects. Set up on the server with <span class="mono">JIRA_BASE_URL</span>, <span class="mono">JIRA_EMAIL</span>, and <span class="mono">JIRA_TOKEN</span> (get a token at id.atlassian.com → Security → API tokens).</p>
@@ -836,6 +868,12 @@ function renderSettings(main) {
     await api('/projects/' + b.dataset.arcdel, 'DELETE');
     await reload('Deleted permanently');
   });
+  api('/bamboo/status').then(s => {
+    const el = $('#bambooStatus');
+    if (el) el.innerHTML = s.configured
+      ? '<span class="badge approved">\u2713 Connected</span> BambooHR is set up — use <strong>Sync from BambooHR</strong> in Time-Off Entries.'
+      : '<span class="badge pending">Not connected</span> Add the BambooHR settings on the server to enable syncing.';
+  }).catch(() => {});
   api('/jira/status').then(s => {
     const el = $('#jiraStatus');
     if (el) el.innerHTML = s.configured
