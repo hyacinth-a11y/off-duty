@@ -328,6 +328,13 @@ app.all('/api/cron', async (req, res) => {
   runDueSchedules(console.log, false).catch(e => console.error('[auto-send] error:', e.message));
 });
 
+// ---------------- BambooHR sync ----------------
+const { syncFromBamboo, isConfigured: bambooConfigured } = require('./bamboo');
+app.get('/api/bamboo/status', (req, res) => ok(res, { configured: bambooConfigured() }));
+app.post('/api/bamboo/sync', async (req, res) => {
+  ok(res, await syncFromBamboo(req.query.dry === '1'));
+});
+
 // ---------------- Jira sync ----------------
 const { syncFromJira, isConfigured: jiraConfigured } = require('./jira');
 app.get('/api/jira/status', (req, res) => ok(res, { configured: jiraConfigured() }));
