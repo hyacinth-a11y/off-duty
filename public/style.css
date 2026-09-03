@@ -487,3 +487,10 @@ dialog::backdrop { background: rgba(23, 41, 59, 0.45); }
   .cal-grid.week { grid-template-columns: 1fr; }
 }
 [data-theme="dark"] .cal-chip { background: color-mix(in srgb, var(--c, #2f7d95) 24%, transparent); }
+
+/* ---------- People filters ---------- */
+.people-filters {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  padding-bottom: 12px; margin-bottom: 4px; border-bottom: 1px solid var(--line);
+}
+.person-open { padding: 0; font-size: inherit; text-align: left; }

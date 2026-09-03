@@ -78,8 +78,8 @@ async function api(path, method = 'GET', body) {
 }
 
 async function refresh() {
-  [S.workspaces, S.projects, S.members, S.holidays, S.timeoffs, S.schedules, S.settings, S.win] =
-    await Promise.all(['/workspaces', '/projects', '/members', '/holidays', '/timeoffs', '/schedules', '/settings', '/window'].map(p => api(p)));
+  [S.workspaces, S.projects, S.members, S.holidays, S.timeoffs, S.schedules, S.settings, S.win, S.views] =
+    await Promise.all(['/workspaces', '/projects', '/members', '/holidays', '/timeoffs', '/schedules', '/settings', '/window', '/views'].map(p => api(p)));
   S._pvData = null; // invalidate Send Notif cache on data refresh
   $('#windowChip').textContent = `Notice window: ${fmt(S.win.start)} → ${fmt(S.win.end)}`;
 }
@@ -400,41 +400,268 @@ function projectForm(p) {
 
 /* ============================ MEMBERS ============================ */
 function renderMembers(main) {
-  const mlist = [...S.members].sort(byName).filter(m => hit(m.name, m.status));
+  const q = Q();
+  const F = S._peopleFilter || { location: '', department: '', division: '', view: '' };
+  S._peopleFilter = F;
+  const views = S.views || [];
+
+  const uniq = key => [...new Set(S.members.map(m => m[key]).filter(Boolean))].sort();
+  const locations = uniq('location'), departments = uniq('department'), divisions = uniq('division');
+
+  const activeView = views.find(v => String(v.id) === String(F.view));
+  let list = [...S.members].sort(byName);
+  if (activeView) list = list.filter(m => (activeView.member_ids || []).includes(m.id));
+  if (F.location) list = list.filter(m => m.location === F.location);
+  if (F.department) list = list.filter(m => m.department === F.department);
+  if (F.division) list = list.filter(m => m.division === F.division);
+  if (q) list = list.filter(m => hit(m.name, m.status, m.division, m.department, m.location, m.job_title, m.work_email));
+
+  const hol = m => {
+    const s = S.settings || {};
+    if (m.location || m.division) {
+      if ((s.division_holidays || {})[m.division] === false) return 'None';
+      return (s.location_map || {})[m.location] || '—';
+    }
+    return m.status === 'PH Employee' ? 'PH' : m.status === 'US Employee' ? 'US' : 'None';
+  };
+  const sel = (id, label, opts, val) => `<label class="small muted" style="display:flex;align-items:center;gap:6px">${label}
+    <select id="${id}" style="width:auto"><option value="">All</option>
+      ${opts.map(o => `<option value="${esc(o)}" ${val === o ? 'selected' : ''}>${esc(o)}</option>`).join('')}
+    </select></label>`;
+
   main.innerHTML = `
     <div class="section-head">
-      <h1>Team Members</h1><p>Source of truth for everyone in the company. Add people here before logging their time off.</p>
-      <span class="spacer"></span><button class="btn-primary" id="addMember">Add member</button>
+      <h1>People</h1><p>Everyone in the company. Click a name to see their details.</p>
+      <span class="spacer"></span>
+      <button class="btn-ghost" id="findDupes" title="Spot and merge duplicate people">⚯ Find duplicates</button>
+      <button class="btn-ghost" id="peopleSync" title="Pull the employee list from BambooHR">↧ Sync from BambooHR</button>
+      <button class="btn-primary" id="addMember">Add person</button>
     </div>
     <div class="card">
-      ${mlist.length ? `<table><thead><tr><th>Name</th><th>Employment status</th><th>Holidays that apply</th><th></th></tr></thead><tbody>
-      ${mlist.map(m => `<tr>
-        <td><strong>${esc(m.name)}</strong></td><td>${esc(m.status)}</td>
-        <td class="small muted">${m.status === 'PH Employee' ? 'PH holidays' : m.status === 'US Employee' ? 'US holidays' : 'None (contractor)'}</td>
-        <td><button class="btn-link" data-edit="${m.id}">Edit</button><button class="btn-danger" data-del="${m.id}">Delete</button></td>
-      </tr>`).join('')}</tbody></table>` : `<div class="empty">${noMatch('No team members yet.')}</div>`}
+      <div class="people-filters">
+        <label class="small muted" style="display:flex;align-items:center;gap:6px">Saved view
+          <select id="fView" style="width:auto"><option value="">Everyone</option>
+            ${views.map(v => `<option value="${v.id}" ${String(F.view) === String(v.id) ? 'selected' : ''}>${esc(v.name)} (${(v.member_ids || []).length})</option>`).join('')}
+          </select></label>
+        ${sel('fLocation', 'Location', locations, F.location)}
+        ${sel('fDepartment', 'Department', departments, F.department)}
+        ${sel('fDivision', 'Employment status', divisions, F.division)}
+        <span class="spacer"></span>
+        <button class="btn-ghost" id="manageViews">Saved views…</button>
+      </div>
+      ${list.length ? `<div class="table-scroll"><table><thead><tr>
+        <th>Name</th><th>Job title</th><th>Employment status</th><th>Location</th><th>Holidays</th><th></th>
+      </tr></thead><tbody>
+      ${list.map(m => `<tr>
+        <td><button class="btn-link person-open" data-person="${m.id}"><strong>${esc(m.name)}</strong></button>${m.bamboo_id ? '' : ' <span class="chip">manual</span>'}</td>
+        <td class="small">${esc(m.job_title || '') || '—'}</td>
+        <td class="small">${esc(m.division || m.status || '') || '—'}</td>
+        <td class="small">${esc(m.location || '') || '—'}</td>
+        <td class="small muted">${esc(hol(m))}</td>
+        <td class="nowrap"><button class="btn-link" data-edit="${m.id}">Edit</button><button class="btn-danger" data-del="${m.id}">Delete</button></td>
+      </tr>`).join('')}</tbody></table></div>` : `<div class="empty">${noMatch('Nobody here yet — add someone, or sync from BambooHR.')}</div>`}
+      <p class="muted small" style="margin-bottom:0">${list.length} of ${S.members.length} people shown.</p>
     </div>`;
+
+  // ---- filters
+  const setF = (k, v) => { F[k] = v; renderMembers(main); };
+  $('#fView').onchange = e => setF('view', e.target.value);
+  $('#fLocation').onchange = e => setF('location', e.target.value);
+  $('#fDepartment').onchange = e => setF('department', e.target.value);
+  $('#fDivision').onchange = e => setF('division', e.target.value);
+
+  // ---- person detail
+  main.querySelectorAll('.person-open').forEach(b => b.onclick = () => {
+    const m = S.members.find(x => x.id === +b.dataset.person);
+    const row = (k, v) => v ? `<div class="em-row"><span class="em-label">${k}</span><span class="em-value">${esc(v)}</span></div>` : '';
+    const theirViews = (S.views || []).filter(v => (v.member_ids || []).includes(m.id)).map(v => v.name);
+    const projects = S.projects.filter(p => !p.archived && (p.member_ids || []).includes(m.id)).map(p => p.name);
+    const off = S.timeoffs.filter(t => t.member_id === m.id).sort((a, b) => b.start_date.localeCompare(a.start_date)).slice(0, 5);
+    openModal(`
+      <h2>${esc(m.name)}</h2>
+      <div class="email-meta">
+        ${row('Job title', m.job_title)}
+        ${row('Department', m.department)}
+        ${row('Employment status', m.division || m.status)}
+        ${row('Location', m.location)}
+        ${row('Work email', m.work_email)}
+        ${row('Holidays', hol(m) === 'None' ? 'None' : hol(m) === '—' ? 'Location not mapped yet — set it in Settings' : hol(m) + ' holidays')}
+        ${row('BambooHR id', m.bamboo_id)}
+        ${row('Saved views', theirViews.join(', '))}
+      </div>
+      <h3 style="margin:14px 0 6px;font-size:15px">Projects (${projects.length})</h3>
+      <div>${projects.map(p => `<span class="chip">${esc(p)}</span>`).join(' ') || '<span class="muted small">Not on any project</span>'}</div>
+      <h3 style="margin:14px 0 6px;font-size:15px">Recent time off</h3>
+      <div>${off.length ? off.map(t => `<div class="small">${fmtRange(t.start_date, t.end_date)} <span class="badge ${t.status}">${t.status}</span></div>`).join('') : '<span class="muted small">None recorded</span>'}</div>
+      <div class="modal-actions"><button class="btn-ghost" id="mCancel">Close</button></div>
+    `, body => { $('#mCancel', body).onclick = closeModal; });
+  });
+
+  // ---- add / edit
   const form = m => openModal(`
-    <h2>${m.id ? 'Edit member' : 'Add member'}</h2>
+    <h2>${m.id ? 'Edit person' : 'Add person'}</h2>
     <label class="field"><span>Name</span><input type="text" id="mName" value="${esc(m.name || '')}"></label>
-    <label class="field"><span>Employment status</span><select id="mStatus">${STATUSES.map(s => `<option ${m.status === s ? 'selected' : ''}>${s}</option>`).join('')}</select></label>
-    <div class="modal-actions"><button class="btn-ghost" id="mCancel">Cancel</button><button class="btn-primary" id="mSave">Save member</button></div>
+    <div class="row">
+      <label class="field"><span>Job title</span><input type="text" id="mJob" value="${esc(m.job_title || '')}"></label>
+      <label class="field"><span>Department</span><input type="text" id="mDept" value="${esc(m.department || '')}"></label>
+    </div>
+    <div class="row">
+      <label class="field"><span>Employment status</span><input type="text" id="mDiv" value="${esc(m.division || '')}" placeholder="e.g. AE PH, Independent Contractor"></label>
+      <label class="field"><span>Location</span><input type="text" id="mLoc" value="${esc(m.location || '')}" placeholder="e.g. Phillipines"></label>
+    </div>
+    <label class="field"><span>Work email</span><input type="text" id="mEmail" value="${esc(m.work_email || '')}"></label>
+    <p class="muted small">Which holidays apply comes from Location and Employment status — map those once in Settings.</p>
+    <div class="modal-actions"><button class="btn-ghost" id="mCancel">Cancel</button><button class="btn-primary" id="mSave">Save</button></div>
   `, body => {
     $('#mCancel', body).onclick = closeModal;
     busyClick($('#mSave', body), async () => {
       try {
-        const payload = { name: $('#mName', body).value.trim(), status: $('#mStatus', body).value };
+        const payload = { name: $('#mName', body).value.trim(), job_title: $('#mJob', body).value.trim(),
+          department: $('#mDept', body).value.trim(), division: $('#mDiv', body).value.trim(),
+          location: $('#mLoc', body).value.trim(), work_email: $('#mEmail', body).value.trim() };
+        if (!payload.name) return toast('Name is required', true);
         await (m.id ? api('/members/' + m.id, 'PUT', payload) : api('/members', 'POST', payload));
-        closeModal(); await reload('Member saved');
+        closeModal(); await reload('Saved');
       } catch (e) { toast(e.message, true); }
     });
   });
   $('#addMember').onclick = () => form({});
   main.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => form(S.members.find(m => m.id === +b.dataset.edit)));
   main.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
-    if (!confirm('Delete this member? Their time-off entries will be removed too.')) return;
+    if (!confirm('Delete this person? Their time-off entries will be removed too.')) return;
     await api('/members/' + b.dataset.del, 'DELETE'); await reload('Deleted');
   });
+
+  // ---- saved views
+  $('#manageViews').onclick = () => {
+    const inView = activeView ? new Set(activeView.member_ids || []) : new Set();
+    openModal(`
+      <h2>Saved views</h2>
+      <p class="muted small">A saved view is just a named group of people — handy for "AppEvolve team" or "PH crew". It only affects what you see here.</p>
+      <div id="viewList">${views.length ? views.map(v => `<div class="em-row">
+          <span class="em-value"><strong>${esc(v.name)}</strong> <span class="muted small">— ${(v.member_ids || []).length} people</span></span>
+          <button class="btn-link" data-vedit="${v.id}">Edit members</button>
+          <button class="btn-danger" data-vdel="${v.id}">Delete</button>
+        </div>`).join('') : '<div class="empty">No saved views yet.</div>'}</div>
+      <label class="field" style="margin-top:12px"><span>New view name</span><input type="text" id="vName" placeholder="e.g. AppEvolve Employees"></label>
+      <div class="modal-actions"><button class="btn-ghost" id="mCancel">Close</button><button class="btn-primary" id="vAdd">Create view</button></div>
+    `, body => {
+      $('#mCancel', body).onclick = closeModal;
+      busyClick($('#vAdd', body), async () => {
+        const name = $('#vName', body).value.trim();
+        if (!name) return toast('Give the view a name', true);
+        await api('/views', 'POST', { name, member_ids: [] });
+        closeModal(); await reload('View created — use "Edit members" to add people');
+      });
+      body.querySelectorAll('[data-vdel]').forEach(b => b.onclick = async () => {
+        if (!confirm('Delete this saved view? The people themselves are not affected.')) return;
+        await api('/views/' + b.dataset.vdel, 'DELETE'); closeModal(); await reload('View deleted');
+      });
+      body.querySelectorAll('[data-vedit]').forEach(b => b.onclick = () => {
+        const v = views.find(x => x.id === +b.dataset.vedit);
+        const chosen = new Set(v.member_ids || []);
+        openModal(`
+          <h2>Who's in "${esc(v.name)}"?</h2>
+          <div style="max-height:50vh;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:8px">
+            ${[...S.members].sort(byName).map(m => `<label style="display:flex;gap:8px;align-items:center;padding:4px 2px">
+              <input type="checkbox" class="vm" value="${m.id}" ${chosen.has(m.id) ? 'checked' : ''} style="width:auto">
+              ${esc(m.name)} <span class="muted small">${esc(m.division || m.status || '')}</span></label>`).join('')}
+          </div>
+          <div class="modal-actions"><button class="btn-ghost" id="mCancel2">Cancel</button><button class="btn-primary" id="vSave">Save view</button></div>
+        `, b2 => {
+          $('#mCancel2', b2).onclick = closeModal;
+          busyClick($('#vSave', b2), async () => {
+            const ids = [...b2.querySelectorAll('.vm:checked')].map(i => +i.value);
+            await api('/views/' + v.id, 'PUT', { member_ids: ids });
+            closeModal(); await reload('View updated');
+          });
+        });
+      });
+    });
+  };
+
+  // ---- duplicate finder / merge
+  $('#findDupes').onclick = () => {
+    // group people whose names look like the same person
+    const key = s => String(s || '').toLowerCase().replace(/[^a-z]/g, '');
+    const firstLast = s => {
+      const parts = String(s || '').toLowerCase().replace(/[^a-z ]/g, '').split(/\s+/).filter(Boolean);
+      return parts.length >= 2 ? parts[0] + '|' + parts[parts.length - 1] : parts[0] || '';
+    };
+    const groups = new Map();
+    for (const m of S.members) {
+      for (const k of new Set([key(m.name), firstLast(m.name)])) {
+        if (!k) continue;
+        if (!groups.has(k)) groups.set(k, new Set());
+        groups.get(k).add(m);
+      }
+    }
+    const pairs = [];
+    const seen = new Set();
+    for (const set of groups.values()) {
+      const arr = [...set];
+      if (arr.length < 2) continue;
+      const sig = arr.map(m => m.id).sort().join('-');
+      if (seen.has(sig)) continue;
+      seen.add(sig);
+      pairs.push(arr);
+    }
+    const detail = m => {
+      const projects = S.projects.filter(p => (p.member_ids || []).includes(m.id)).length;
+      const off = S.timeoffs.filter(t => t.member_id === m.id).length;
+      return `${m.bamboo_id ? 'from BambooHR' : 'added by hand'} \u00b7 ${projects} project(s) \u00b7 ${off} time-off entr${off === 1 ? 'y' : 'ies'}${m.division ? ' \u00b7 ' + esc(m.division) : ''}`;
+    };
+    openModal(`
+      <h2>Possible duplicates</h2>
+      ${pairs.length ? `<p class="muted small">Pick which record to <strong>keep</strong>. The other one's projects, time-off and saved-view membership move across before it's removed — nothing is lost.</p>
+      ${pairs.map((arr, i) => `<div class="email-meta" style="margin-bottom:10px">
+        ${arr.map(m => `<div class="em-row">
+          <span class="em-value"><strong>${esc(m.name)}</strong><br><span class="muted small">${detail(m)}</span></span>
+          <button class="btn-primary keep-btn" data-group="${i}" data-keep="${m.id}">Keep this one</button>
+        </div>`).join('')}
+      </div>`).join('')}` : '<div class="empty">No likely duplicates found. \u2728</div>'}
+      <div class="modal-actions"><button class="btn-ghost" id="mCancel">Close</button></div>
+    `, body => {
+      $('#mCancel', body).onclick = closeModal;
+      body.querySelectorAll('.keep-btn').forEach(btn => btn.onclick = async () => {
+        const group = pairs[+btn.dataset.group];
+        const keepId = +btn.dataset.keep;
+        const others = group.filter(m => m.id !== keepId);
+        const keep = group.find(m => m.id === keepId);
+        if (!confirm(`Keep "${keep.name}" and merge ${others.length} other record(s) into it?\n\n${others.map(o => '  \u2022 ' + o.name).join('\n')}\n\nTheir projects and time-off move to the kept record.`)) return;
+        try {
+          for (const o of others) await api('/members/' + keepId + '/merge', 'POST', { from_id: o.id });
+          closeModal(); await reload('Merged');
+        } catch (e) { toast(e.message, true); }
+      });
+    });
+  };
+
+  // ---- BambooHR people sync
+  $('#peopleSync').onclick = async () => {
+    const btn = $('#peopleSync'); if (btn.disabled) return;
+    btn.disabled = true; btn.textContent = 'Checking BambooHR…';
+    const reset = () => { btn.disabled = false; btn.textContent = '↧ Sync from BambooHR'; };
+    try {
+      const st = await api('/bamboo/status');
+      if (!st.configured) { toast('BambooHR isn\u2019t connected yet — add the settings in Render first', true); return reset(); }
+      const p = await api('/bamboo/sync-people?dry=1', 'POST');
+      if (!p.ok) { toast(p.error, true); return reset(); }
+      const c = p.counts;
+      if (!c.added && !c.updated) { toast(`People are already up to date (${c.unchanged} matched)`); return reset(); }
+      const lines = [];
+      if (c.added) lines.push(`ADD (${c.added}):\n` + p.added.slice(0, 15).map(x => '  \u2022 ' + x).join('\n') + (c.added > 15 ? `\n  …and ${c.added - 15} more` : ''));
+      if (c.updated) lines.push(`UPDATE details (${c.updated}):\n` + p.updated.slice(0, 10).map(x => '  \u2022 ' + x).join('\n'));
+      if (!confirm(`Sync people from BambooHR?\n\n${lines.join('\n\n')}\n\nPeople already in Off Duty are kept and updated \u2014 nobody is replaced or removed.`)) return reset();
+      btn.textContent = 'Syncing…';
+      const r = await api('/bamboo/sync-people', 'POST');
+      if (!r.ok) { toast(r.error, true); return reset(); }
+      await reload(`${r.counts.added} added, ${r.counts.updated} updated`);
+      if (r.counts.new_locations || r.counts.new_divisions) {
+        setTimeout(() => alert(`Almost done!\n\nNew values found that decide who gets holidays:\n\nLocations: ${r.new_locations.join(', ') || 'none'}\nEmployment statuses: ${r.new_divisions.join(', ') || 'none'}\n\nGo to Settings \u2192 "Holidays by location & status" and set these once.`), 400);
+      }
+    } catch (e) { toast(e.message, true); reset(); }
+  };
 }
 
 /* ============================ HOLIDAYS ============================ */
@@ -814,6 +1041,34 @@ function renderSettings(main) {
       })()}
     </div>
 
+    <div class="card"><h2>Holidays by location &amp; employment status</h2>
+      <p class="muted small">Set these once and everyone inherits them, including future hires. <strong>Location</strong> decides which country's holidays a person gets; <strong>employment status</strong> can switch holidays off entirely (contractors usually observe none).</p>
+      ${(() => {
+        const lm = (S.settings.location_map) || {}, dh = (S.settings.division_holidays) || {};
+        const locs = Object.keys(lm).sort(), divs = Object.keys(dh).sort();
+        if (!locs.length && !divs.length) return '<div class="empty">Nothing to map yet — run <strong>Sync from BambooHR</strong> in People and the values will appear here.</div>';
+        return `<div class="row" style="align-items:flex-start;gap:24px">
+          <div style="flex:1">
+            <h3 style="font-size:14px;margin:0 0 6px">Location → holidays</h3>
+            ${locs.map(l => `<div class="em-row"><span class="em-value">${esc(l)}</span>
+              <select class="locMap" data-loc="${esc(l)}" style="width:auto">
+                <option value="" ${!lm[l] ? 'selected' : ''}>No holidays</option>
+                <option value="PH" ${lm[l] === 'PH' ? 'selected' : ''}>PH holidays</option>
+                <option value="US" ${lm[l] === 'US' ? 'selected' : ''}>US holidays</option>
+              </select></div>`).join('') || '<span class="muted small">none found</span>'}
+          </div>
+          <div style="flex:1">
+            <h3 style="font-size:14px;margin:0 0 6px">Employment status → observes holidays?</h3>
+            ${divs.map(d => `<div class="em-row"><span class="em-value">${esc(d)}</span>
+              <select class="divMap" data-div="${esc(d)}" style="width:auto">
+                <option value="yes" ${dh[d] !== false ? 'selected' : ''}>Yes</option>
+                <option value="no" ${dh[d] === false ? 'selected' : ''}>No (contractor)</option>
+              </select></div>`).join('') || '<span class="muted small">none found</span>'}
+          </div></div>
+          <div style="margin-top:12px"><button class="btn-primary" id="saveMaps">Save holiday rules</button></div>`;
+      })()}
+    </div>
+
     <div class="card"><h2>BambooHR connection</h2>
       <div id="bambooStatus" class="muted small">Checking…</div>
       <p class="muted small" style="margin-top:8px">Imports approved time-off so it doesn't have to be entered twice. <strong>Only people in your Team Members list are synced</strong> — that list is the filter. Set up on the server with <span class="mono">BAMBOO_SUBDOMAIN</span> and <span class="mono">BAMBOO_API_KEY</span> (BambooHR → your name → API Keys).</p>
@@ -868,6 +1123,13 @@ function renderSettings(main) {
     await api('/projects/' + b.dataset.arcdel, 'DELETE');
     await reload('Deleted permanently');
   });
+  if ($('#saveMaps')) busyClick($('#saveMaps'), async () => {
+    const location_map = {}, division_holidays = {};
+    main.querySelectorAll('.locMap').forEach(s => location_map[s.dataset.loc] = s.value);
+    main.querySelectorAll('.divMap').forEach(s => division_holidays[s.dataset.div] = s.value === 'yes');
+    await api('/settings', 'PUT', { location_map, division_holidays });
+    await reload('Holiday rules saved');
+  });
   api('/bamboo/status').then(s => {
     const el = $('#bambooStatus');
     if (el) el.innerHTML = s.configured
@@ -894,7 +1156,18 @@ function renderSettings(main) {
 /* ============================ router ============================ */
 
 /* ============================ WHO'S OUT (CALENDAR) ============================ */
-const HOLIDAY_STATUS = { 'PH Employee': 'PH', 'US Employee': 'US' }; // contractors observe none
+// Same rule the server uses: location decides which country's holidays apply,
+// employment status can switch them off. Falls back to the original status
+// field for anyone added by hand before the BambooHR sync.
+const LEGACY_HOLIDAY_STATUS = { 'PH Employee': 'PH', 'US Employee': 'US' };
+function holidayLocationFor(m) {
+  const s = S.settings || {};
+  if (m.location || m.division) {
+    if ((s.division_holidays || {})[m.division] === false) return null;
+    return (s.location_map || {})[m.location] || null;
+  }
+  return LEGACY_HOLIDAY_STATUS[m.status] || null;
+}
 const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
 
 // Colour per member so the same person reads the same everywhere on the grid
@@ -926,7 +1199,7 @@ function outOn(iso) {
   const hols = [];
   for (const h of S.holidays) {
     if (h.date !== iso) continue;
-    const observers = S.members.filter(m => HOLIDAY_STATUS[m.status] === h.location);
+    const observers = S.members.filter(m => holidayLocationFor(m) === h.location);
     const shown = q ? observers.filter(m => m.name.toLowerCase().includes(q)) : observers;
     if (!shown.length) continue;
     hols.push({ name: h.name, location: h.location, members: shown });
