@@ -154,8 +154,10 @@ async function syncFromBamboo(dry = false) {
 // endpoint is used because /employees/directory returns only a limited field
 // set (and can be switched off by the company); we fall back to it if needed.
 // Only work-relevant fields are requested — nothing personal or sensitive.
-const PEOPLE_FIELDS = ['id', 'displayName', 'firstName', 'lastName', 'jobTitle',
-  'department', 'division', 'location', 'workEmail', 'employmentHistoryStatus'];
+// BambooHR returns the employee id automatically, so it isn't requested here —
+// including it can make the whole report request fail.
+const PEOPLE_FIELDS = ['displayName', 'firstName', 'lastName', 'jobTitle',
+  'department', 'division', 'location', 'workEmail'];
 
 async function fetchEmployees() {
   const c = config();
@@ -167,12 +169,13 @@ async function fetchEmployees() {
     body: JSON.stringify({ title: 'Off Duty people sync', fields: PEOPLE_FIELDS }),
   });
   if (res.ok) {
-    const data = await res.json();
+    const data = await res.json().catch(() => ({}));
     if (Array.isArray(data.employees) && data.employees.length) return data.employees;
   }
   // fall back to the plain directory
-  const dir = await bambooGet('/employees/directory');
-  return Array.isArray(dir.employees) ? dir.employees : [];
+  const dir = await bambooGet('/employees/directory').catch(() => ({}));
+  if (Array.isArray(dir.employees) && dir.employees.length) return dir.employees;
+  throw new Error('BambooHR returned no employees. Open /api/bamboo/debug for the details — this is usually the API key\'s permissions, or the employee directory being switched off.');
 }
 
 // Bring the People list in line with BambooHR. Existing people are updated in
@@ -253,4 +256,51 @@ async function syncPeople(dry = false) {
   };
 }
 
-module.exports = { syncFromBamboo, syncPeople, isConfigured };
+// Diagnostic: try every route to the employee list and report exactly what
+// BambooHR says, so a failure is visible instead of silent.
+async function debugEmployees() {
+  const c = config();
+  if (!isConfigured()) return { ok: false, error: 'Not configured (BAMBOO_SUBDOMAIN / BAMBOO_API_KEY)' };
+  const auth = Buffer.from(`${c.apiKey}:x`).toString('base64');
+  const base = `https://api.bamboohr.com/api/gateway.php/${encodeURIComponent(c.subdomain)}/v1`;
+  const out = { subdomain: c.subdomain, key_length: c.apiKey.length, tried: [] };
+
+  // 1. custom report
+  try {
+    const res = await fetch(`${base}/reports/custom?format=JSON&onlyCurrent=true`, {
+      method: 'POST',
+      headers: { Authorization: `Basic ${auth}`, Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'Off Duty people sync', fields: PEOPLE_FIELDS }),
+    });
+    const text = await res.text();
+    let count = null, keys = null;
+    try { const j = JSON.parse(text); count = (j.employees || []).length; keys = j.employees && j.employees[0] ? Object.keys(j.employees[0]) : null; } catch {}
+    out.tried.push({ route: 'POST /reports/custom', status: res.status, employees: count, sample_fields: keys, body_start: text.slice(0, 200) });
+  } catch (e) { out.tried.push({ route: 'POST /reports/custom', error: e.message }); }
+
+  // 2. plain directory
+  try {
+    const res = await fetch(`${base}/employees/directory`, {
+      headers: { Authorization: `Basic ${auth}`, Accept: 'application/json' },
+    });
+    const text = await res.text();
+    let count = null, keys = null;
+    try { const j = JSON.parse(text); count = (j.employees || []).length; keys = j.employees && j.employees[0] ? Object.keys(j.employees[0]) : null; } catch {}
+    out.tried.push({ route: 'GET /employees/directory', status: res.status, employees: count, sample_fields: keys, body_start: text.slice(0, 200) });
+  } catch (e) { out.tried.push({ route: 'GET /employees/directory', error: e.message }); }
+
+  // 3. who's out (proves the key works at all)
+  try {
+    const res = await fetch(`${base}/time_off/whos_out/`, {
+      headers: { Authorization: `Basic ${auth}`, Accept: 'application/json' },
+    });
+    const text = await res.text();
+    let count = null;
+    try { const j = JSON.parse(text); count = Array.isArray(j) ? j.length : null; } catch {}
+    out.tried.push({ route: 'GET /time_off/whos_out', status: res.status, rows: count, body_start: text.slice(0, 200) });
+  } catch (e) { out.tried.push({ route: 'GET /time_off/whos_out', error: e.message }); }
+
+  return out;
+}
+
+module.exports = { syncFromBamboo, syncPeople, debugEmployees, isConfigured };

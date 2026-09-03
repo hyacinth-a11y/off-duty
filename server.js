@@ -403,6 +403,10 @@ app.all('/api/cron', async (req, res) => {
 // ---------------- BambooHR sync ----------------
 const { syncFromBamboo, isConfigured: bambooConfigured } = require('./bamboo');
 app.get('/api/bamboo/status', (req, res) => ok(res, { configured: bambooConfigured() }));
+app.get('/api/bamboo/debug', async (req, res) => {
+  const { debugEmployees } = require('./bamboo');
+  ok(res, await debugEmployees());
+});
 app.post('/api/bamboo/sync-people', async (req, res) => {
   const { syncPeople } = require('./bamboo');
   ok(res, await syncPeople(req.query.dry === '1'));
