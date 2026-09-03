@@ -160,6 +160,14 @@ const PEOPLE_FIELDS = ['displayName', 'firstName', 'lastName', 'jobTitle',
   'department', 'division', 'location', 'workEmail'];
 
 async function fetchEmployees() {
+  // The employee directory is the reliable source: it returns the whole company
+  // with exactly the fields we need (displayName, jobTitle, department,
+  // division, location, workEmail). The custom-report endpoint is only used as
+  // a fallback — with some permission setups it returns just the key's owner,
+  // which would silently sync one person instead of everyone.
+  const dir = await bambooGet('/employees/directory').catch(() => ({}));
+  if (Array.isArray(dir.employees) && dir.employees.length) return dir.employees;
+
   const c = config();
   const auth = Buffer.from(`${c.apiKey}:x`).toString('base64');
   const url = `https://api.bamboohr.com/api/gateway.php/${encodeURIComponent(c.subdomain)}/v1/reports/custom?format=JSON&onlyCurrent=true`;
@@ -172,10 +180,7 @@ async function fetchEmployees() {
     const data = await res.json().catch(() => ({}));
     if (Array.isArray(data.employees) && data.employees.length) return data.employees;
   }
-  // fall back to the plain directory
-  const dir = await bambooGet('/employees/directory').catch(() => ({}));
-  if (Array.isArray(dir.employees) && dir.employees.length) return dir.employees;
-  throw new Error('BambooHR returned no employees. Open /api/bamboo/debug for the details — this is usually the API key\'s permissions, or the employee directory being switched off.');
+  throw new Error('BambooHR returned no employees. Open /api/bamboo/debug for the details.');
 }
 
 // Bring the People list in line with BambooHR. Existing people are updated in
