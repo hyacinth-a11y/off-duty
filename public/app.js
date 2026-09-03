@@ -1227,12 +1227,25 @@ function todayIso() {
 }
 
 // Everyone out on a given date: approved time-off + holidays their status observes
+// Does this person pass the calendar's filters (same set as People)?
+function calPasses(memberId) {
+  const F = S._calFilter || {};
+  const m = S.members.find(x => x.id === memberId) || {};
+  const view = (S.views || []).find(v => String(v.id) === String(F.view));
+  if (view && !(view.member_ids || []).includes(memberId)) return false;
+  if (F.location && m.location !== F.location) return false;
+  if (F.department && m.department !== F.department) return false;
+  if (F.division && (m.division || m.status) !== F.division) return false;
+  return true;
+}
+
 function outOn(iso) {
   const q = Q();
   const people = [];
   for (const t of S.timeoffs) {
     if (t.status !== 'approved') continue;
     if (iso < t.start_date || iso > t.end_date) continue;
+    if (!calPasses(t.member_id)) continue;
     const name = memberName(t.member_id);
     const projects = (t.project_ids || []).map(projectName);
     if (q && !(name.toLowerCase().includes(q) || projects.join(' ').toLowerCase().includes(q))) continue;
@@ -1241,7 +1254,7 @@ function outOn(iso) {
   const hols = [];
   for (const h of S.holidays) {
     if (h.date !== iso) continue;
-    const observers = S.members.filter(m => holidayLocationFor(m) === h.location);
+    const observers = S.members.filter(m => holidayLocationFor(m) === h.location && calPasses(m.id));
     const shown = q ? observers.filter(m => m.name.toLowerCase().includes(q)) : observers;
     if (!shown.length) continue;
     hols.push({ name: h.name, location: h.location, members: shown });
@@ -1251,6 +1264,8 @@ function outOn(iso) {
 
 function renderCalendar(main) {
   const view = S._calView || 'month';
+  const CF = S._calFilter || { location: '', department: '', division: '', view: '' };
+  S._calFilter = CF;
   const anchor = S._calAnchor || todayIso();          // any date inside the shown range
   const today = todayIso();
   const a = parseIso(anchor);
@@ -1287,6 +1302,16 @@ function renderCalendar(main) {
       </div>
     </div>
     <div class="card">
+      <div class="people-filters" style="margin-bottom:12px">
+        <label class="small muted" style="display:flex;align-items:center;gap:6px">Saved view
+          <select id="cfView" style="width:auto"><option value="">Everyone</option>
+            ${(S.views || []).map(v => `<option value="${v.id}" ${String(CF.view) === String(v.id) ? 'selected' : ''}>${esc(v.name)}</option>`).join('')}
+          </select></label>
+        ${tfSel('cfLocation', 'Location', tfUniq('location'), CF.location)}
+        ${tfSel('cfDepartment', 'Department', tfUniq('department'), CF.department)}
+        ${tfSel('cfDivision', 'Employment status', tfDivisions(), CF.division)}
+        ${CF.location || CF.department || CF.division || CF.view ? '<button class="btn-ghost" id="cfClear">Clear filters</button>' : ''}
+      </div>
       <div class="cal-bar">
         <button class="btn-ghost cal-nav" data-dir="-1" title="Previous">‹</button>
         <button class="btn-ghost" id="calToday">Today</button>
@@ -1306,6 +1331,12 @@ function renderCalendar(main) {
   main.querySelectorAll('.cal-view').forEach(b => b.onclick = () => { S._calView = b.dataset.view; renderCalendar(main); });
   main.querySelectorAll('.cal-nav').forEach(b => b.onclick = () => shift(+b.dataset.dir));
   $('#calToday').onclick = () => { S._calAnchor = todayIso(); renderCalendar(main); };
+  const setCF = (k, v) => { CF[k] = v; renderCalendar(main); };
+  $('#cfView').onchange = e => setCF('view', e.target.value);
+  $('#cfLocation').onchange = e => setCF('location', e.target.value);
+  $('#cfDepartment').onchange = e => setCF('department', e.target.value);
+  $('#cfDivision').onchange = e => setCF('division', e.target.value);
+  if ($('#cfClear')) $('#cfClear').onclick = () => { S._calFilter = { location: '', department: '', division: '', view: '' }; renderCalendar(main); };
   // clicking a day in month/week view opens that day
   main.querySelectorAll('[data-day]').forEach(c => c.onclick = () => {
     S._calAnchor = c.dataset.day; S._calView = 'today'; renderCalendar(main);
