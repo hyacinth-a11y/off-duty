@@ -163,20 +163,45 @@ app.post('/api/projects/:id/restore', (req, res) => {
   save(); ok(res, p);
 });
 
+// ---------------- saved People views (filters) ----------------
+app.get('/api/views', (req, res) => ok(res, db().views || []));
+app.post('/api/views', (req, res) => {
+  const d = db();
+  d.views = d.views || [];
+  const v = { id: nextId(), name: (req.body.name || 'Untitled view').trim(), member_ids: req.body.member_ids || [] };
+  d.views.push(v); save(); ok(res, v);
+});
+app.put('/api/views/:id', (req, res) => {
+  const v = (db().views || []).find(x => x.id === +req.params.id);
+  if (!v) return res.status(404).json({ error: 'View not found' });
+  if (req.body.name !== undefined) v.name = req.body.name.trim();
+  if (Array.isArray(req.body.member_ids)) v.member_ids = req.body.member_ids;
+  save(); ok(res, v);
+});
+app.delete('/api/views/:id', (req, res) => {
+  const d = db();
+  d.views = (d.views || []).filter(x => x.id !== +req.params.id);
+  save(); ok(res);
+});
+
 // ---------------- members (Section 2) ----------------
-const STATUSES = ['PH Employee', 'US Employee', 'Contractor'];
+// People fields. `status` is the original hand-entered kind and still works for
+// anyone not synced from BambooHR; `division` is what BambooHR calls the
+// employment status ("AE PH", "Independent Contractor", ...).
+const PERSON_FIELDS = ['job_title', 'department', 'division', 'location', 'work_email', 'status'];
 app.get('/api/members', (req, res) => ok(res, db().members));
 app.post('/api/members', (req, res) => {
-  const { name, status } = req.body;
-  if (!name || !STATUSES.includes(status)) return res.status(400).json({ error: 'Name and a valid employment status are required' });
-  const m = { id: nextId(), name, status };
+  const b = req.body;
+  if (!b.name) return res.status(400).json({ error: 'Name is required' });
+  const m = { id: nextId(), name: b.name };
+  for (const f of PERSON_FIELDS) m[f] = b[f] || '';
   db().members.push(m); save(); ok(res, { id: m.id });
 });
 app.put('/api/members/:id', (req, res) => {
   const m = db().members.find(x => x.id === +req.params.id);
   if (!m) return res.status(404).json({ error: 'Not found' });
   if (req.body.name) m.name = req.body.name;
-  if (STATUSES.includes(req.body.status)) m.status = req.body.status;
+  for (const f of PERSON_FIELDS) if (req.body[f] !== undefined) m[f] = req.body[f];
   save(); ok(res);
 });
 app.delete('/api/members/:id', (req, res) => {
@@ -185,6 +210,53 @@ app.delete('/api/members/:id', (req, res) => {
   d.timeoffs = d.timeoffs.filter(t => t.member_id !== id);
   d.projects.forEach(p => p.member_ids = (p.member_ids || []).filter(mid => mid !== id));
   save(); ok(res);
+});
+
+// Merge one person into another: everything attached to `from` moves to the
+// person in the URL, then the duplicate is removed. Used to clean up when a
+// BambooHR sync creates a second record for someone already in the app.
+app.post('/api/members/:id/merge', (req, res) => {
+  const d = db();
+  const keepId = +req.params.id, fromId = +req.body.from_id;
+  const keep = d.members.find(m => m.id === keepId);
+  const from = d.members.find(m => m.id === fromId);
+  if (!keep || !from) return res.status(404).json({ error: 'Person not found' });
+  if (keepId === fromId) return res.status(400).json({ error: 'Cannot merge someone into themselves' });
+
+  // time-off entries move across (skip exact duplicates of the same dates)
+  let movedOff = 0;
+  for (const t of d.timeoffs) {
+    if (t.member_id !== fromId) continue;
+    const clash = d.timeoffs.some(x => x.member_id === keepId && x.start_date === t.start_date && x.end_date === t.end_date);
+    if (clash) { t._drop = true; continue; }
+    t.member_id = keepId; movedOff++;
+  }
+  const dropped = d.timeoffs.filter(t => t._drop).length;
+  d.timeoffs = d.timeoffs.filter(t => !t._drop);
+
+  // project rosters
+  let movedProjects = 0;
+  for (const p of d.projects) {
+    const ids = p.member_ids || [];
+    if (!ids.includes(fromId)) continue;
+    p.member_ids = [...new Set(ids.map(x => (x === fromId ? keepId : x)))];
+    movedProjects++;
+  }
+
+  // saved views
+  for (const v of (d.views || [])) {
+    const ids = v.member_ids || [];
+    if (ids.includes(fromId)) v.member_ids = [...new Set(ids.map(x => (x === fromId ? keepId : x)))];
+  }
+
+  // fill any blank details on the kept record from the one being removed
+  for (const f of ['job_title', 'department', 'division', 'location', 'work_email', 'bamboo_id', 'status']) {
+    if (!keep[f] && from[f]) keep[f] = from[f];
+  }
+
+  d.members = d.members.filter(m => m.id !== fromId);
+  save();
+  ok(res, { kept: keep.name, removed: from.name, movedOff, dropped, movedProjects });
 });
 
 // ---------------- holidays (Section 3) ----------------
@@ -331,6 +403,10 @@ app.all('/api/cron', async (req, res) => {
 // ---------------- BambooHR sync ----------------
 const { syncFromBamboo, isConfigured: bambooConfigured } = require('./bamboo');
 app.get('/api/bamboo/status', (req, res) => ok(res, { configured: bambooConfigured() }));
+app.post('/api/bamboo/sync-people', async (req, res) => {
+  const { syncPeople } = require('./bamboo');
+  ok(res, await syncPeople(req.query.dry === '1'));
+});
 app.post('/api/bamboo/sync', async (req, res) => {
   ok(res, await syncFromBamboo(req.query.dry === '1'));
 });
@@ -347,6 +423,8 @@ app.get('/api/settings', (req, res) => ok(res, db().settings));
 app.put('/api/settings', (req, res) => {
   const s = db().settings; const b = req.body;
   if (b.timezone) s.timezone = b.timezone;
+  if (b.location_map && typeof b.location_map === 'object') s.location_map = b.location_map;
+  if (b.division_holidays && typeof b.division_holidays === 'object') s.division_holidays = b.division_holidays;
   if (b.internal_template !== undefined) s.internal_template = b.internal_template || DEFAULT_INTERNAL_TEMPLATE;
   if (b.external_template !== undefined) s.external_template = b.external_template || DEFAULT_EXTERNAL_TEMPLATE;
   save(); ok(res);

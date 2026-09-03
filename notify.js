@@ -57,7 +57,26 @@ function fmtRange(a, b) {
   return `${fmtDate(a)} – ${fmtDate(b)}`;
 }
 
-const HOLIDAY_STATUS = { 'PH Employee': 'PH', 'US Employee': 'US' }; // Contractors observe none
+// Which holidays a person observes.
+//
+// New model (people synced from BambooHR): their LOCATION decides which country's
+// holidays apply, mapped in Settings ("Phillipines" -> "PH"). Their EMPLOYMENT
+// STATUS (BambooHR division) can switch holidays off entirely — contractors
+// typically observe none. A division that isn't listed observes holidays.
+//
+// Old model (members added by hand before the BambooHR sync): the original
+// status field still works, so nothing breaks for existing data.
+const LEGACY_HOLIDAY_STATUS = { 'PH Employee': 'PH', 'US Employee': 'US' }; // Contractors observe none
+
+function holidayLocationFor(member, settings) {
+  const s = settings || {};
+  // people carrying BambooHR data use the new rules
+  if (member.location || member.division) {
+    if ((s.division_holidays || {})[member.division] === false) return null; // e.g. contractors
+    return (s.location_map || {})[member.location] || null;
+  }
+  return LEGACY_HOLIDAY_STATUS[member.status] || null;
+}
 
 // ---------- gather what goes into a project's notification ----------
 function projectReport(projectId, now = new Date()) {
@@ -87,7 +106,7 @@ function projectReport(projectId, now = new Date()) {
 
   const holidayGroups = holidays.map(h => ({
     ...h,
-    members: pool.filter(m => HOLIDAY_STATUS[m.status] === h.location),
+    members: pool.filter(m => holidayLocationFor(m, db.settings) === h.location),
   })).filter(g => g.members.length);
 
   return { project, win, ooo, holidayGroups };
@@ -335,4 +354,4 @@ async function sendProjectNotifications(projectId, now = new Date(), channelId =
   return { ok: results.every(r => r.ok), results };
 }
 
-module.exports = { reportingWindow, projectReport, buildMessages, sendProjectNotifications, partsInTz, fmtRange, fmtDate };
+module.exports = { reportingWindow, projectReport, buildMessages, sendProjectNotifications, holidayLocationFor, partsInTz, fmtRange, fmtDate };

@@ -150,4 +150,107 @@ async function syncFromBamboo(dry = false) {
   };
 }
 
-module.exports = { syncFromBamboo, isConfigured };
+// Pull the employee list with the fields we care about. The custom-report
+// endpoint is used because /employees/directory returns only a limited field
+// set (and can be switched off by the company); we fall back to it if needed.
+// Only work-relevant fields are requested — nothing personal or sensitive.
+const PEOPLE_FIELDS = ['id', 'displayName', 'firstName', 'lastName', 'jobTitle',
+  'department', 'division', 'location', 'workEmail', 'employmentHistoryStatus'];
+
+async function fetchEmployees() {
+  const c = config();
+  const auth = Buffer.from(`${c.apiKey}:x`).toString('base64');
+  const url = `https://api.bamboohr.com/api/gateway.php/${encodeURIComponent(c.subdomain)}/v1/reports/custom?format=JSON&onlyCurrent=true`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { Authorization: `Basic ${auth}`, Accept: 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title: 'Off Duty people sync', fields: PEOPLE_FIELDS }),
+  });
+  if (res.ok) {
+    const data = await res.json();
+    if (Array.isArray(data.employees) && data.employees.length) return data.employees;
+  }
+  // fall back to the plain directory
+  const dir = await bambooGet('/employees/directory');
+  return Array.isArray(dir.employees) ? dir.employees : [];
+}
+
+// Bring the People list in line with BambooHR. Existing people are updated in
+// place (never replaced), and anyone already in Off Duty who isn't in BambooHR
+// is left completely alone.
+async function syncPeople(dry = false) {
+  if (!isConfigured()) {
+    return { ok: false, error: 'BambooHR is not configured on the server (BAMBOO_SUBDOMAIN / BAMBOO_API_KEY)' };
+  }
+  let employees;
+  try { employees = await fetchEmployees(); }
+  catch (e) { return { ok: false, error: e.message }; }
+
+  const db = load();
+  const byBambooId = new Map(db.members.filter(m => m.bamboo_id).map(m => [String(m.bamboo_id), m]));
+  const byName = new Map(db.members.map(m => [norm(m.name), m]));
+
+  const added = [], updated = [], untouched = [];
+  const locations = new Set(), divisions = new Set();
+
+  for (const e of employees) {
+    const id = String(e.id);
+    const name = (e.displayName || `${e.firstName || ''} ${e.lastName || ''}`).trim();
+    if (!name) continue;
+    const fields = {
+      name,
+      job_title: e.jobTitle || '',
+      department: e.department || '',
+      division: e.division || '',
+      location: e.location || '',
+      work_email: e.workEmail || '',
+      bamboo_id: id,
+    };
+    if (fields.location) locations.add(fields.location);
+    if (fields.division) divisions.add(fields.division);
+
+    // match on the remembered BambooHR id first, then fall back to the name once
+    const existing = byBambooId.get(id) || byName.get(norm(name));
+    if (existing) {
+      const changed = Object.keys(fields).some(k => existing[k] !== fields[k]);
+      if (changed) {
+        if (!dry) Object.assign(existing, fields);   // keeps id, status, view membership
+        updated.push(name);
+      } else {
+        untouched.push(name);
+      }
+      byBambooId.set(id, existing);
+      continue;
+    }
+    if (!dry) db.members.push({ id: nextId(), status: '', ...fields });
+    added.push(name);
+  }
+
+  // Offer any location / employment status we haven't seen before, so they can
+  // be mapped in Settings.
+  const knownLoc = Object.keys((db.settings.location_map) || {});
+  const knownDiv = Object.keys((db.settings.division_holidays) || {});
+  const newLocations = [...locations].filter(l => !knownLoc.includes(l));
+  const newDivisions = [...divisions].filter(d => !knownDiv.includes(d));
+
+  if (!dry) {
+    // seed the maps so Settings has a row for each value to configure
+    db.settings.location_map = db.settings.location_map || {};
+    db.settings.division_holidays = db.settings.division_holidays || {};
+    for (const l of locations) if (!(l in db.settings.location_map)) db.settings.location_map[l] = '';
+    for (const d of divisions) if (!(d in db.settings.division_holidays)) db.settings.division_holidays[d] = true;
+    save();
+  }
+
+  return {
+    ok: true,
+    mode: dry ? 'preview' : 'live',
+    added, updated,
+    counts: { added: added.length, updated: updated.length, unchanged: untouched.length,
+              new_locations: newLocations.length, new_divisions: newDivisions.length },
+    new_locations: newLocations,
+    new_divisions: newDivisions,
+  };
+}
+
+module.exports = { syncFromBamboo, syncPeople, isConfigured };

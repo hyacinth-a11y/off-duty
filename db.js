@@ -41,7 +41,14 @@ const EMPTY = {
     timezone: 'Asia/Manila',
     external_template: DEFAULT_EXTERNAL_TEMPLATE,
     internal_template: DEFAULT_INTERNAL_TEMPLATE,
+    // "Phillipines" -> "PH", "United States" -> "US". Filled in from Settings
+    // after a People sync, so typos and new offices are a one-click fix.
+    location_map: {},
+    // Per employment status (BambooHR division): do these people observe
+    // holidays at all? Contractors usually don't. Missing = yes.
+    division_holidays: {},
   },
+  views: [],   // saved People filters: { id, name, member_ids: [] }
   seq: 1,
 };
 
