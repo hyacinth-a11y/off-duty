@@ -111,6 +111,12 @@ $('#modal').addEventListener('click', e => { if (e.target === $('#modal')) close
 
 const memberName = id => (S.members.find(m => m.id === id) || {}).name || '(removed)';
 const projectName = id => (S.projects.find(p => p.id === id) || {}).name || '(removed)';
+const tfUniq = key => [...new Set(S.members.map(m => m[key]).filter(Boolean))].sort();
+const tfDivisions = () => [...new Set(S.members.map(m => m.division || m.status).filter(Boolean))].sort();
+const tfSel = (id, label, opts, val) => `<label class="small muted" style="display:flex;align-items:center;gap:6px">${label}
+  <select id="${id}" style="width:auto"><option value="">All</option>
+    ${opts.map(o => `<option value="${esc(o)}" ${val === o ? 'selected' : ''}>${esc(o)}</option>`).join('')}
+  </select></label>`;
 const wsName = id => (S.workspaces.find(w => w.id === id) || {}).name || '—';
 const byName = (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }); // alphabetical, by project/member name
 const fmtDT = iso => new Date(iso).toLocaleString('en-US', { timeZone: (S.settings && S.settings.timezone) || 'Asia/Manila', month: 'long', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
@@ -434,7 +440,7 @@ function renderMembers(main) {
       <h1>People</h1><p>Everyone in the company. Click a name to see their details.</p>
       <span class="spacer"></span>
       <button class="btn-ghost" id="findDupes" title="Spot and merge duplicate people">⚯ Find duplicates</button>
-      <button class="btn-ghost" id="peopleSync" title="Pull the employee list from BambooHR">↧ Sync from BambooHR</button>
+      <button class="btn-ghost" id="peopleSync" title="Pull the employee list from BambooHR into this app">↧ Sync people from BambooHR</button>
       <button class="btn-primary" id="addMember">Add person</button>
     </div>
     <div class="card">
@@ -641,7 +647,7 @@ function renderMembers(main) {
   $('#peopleSync').onclick = async () => {
     const btn = $('#peopleSync'); if (btn.disabled) return;
     btn.disabled = true; btn.textContent = 'Checking BambooHR…';
-    const reset = () => { btn.disabled = false; btn.textContent = '↧ Sync from BambooHR'; };
+    const reset = () => { btn.disabled = false; btn.textContent = '↧ Sync people from BambooHR'; };
     try {
       const st = await api('/bamboo/status');
       if (!st.configured) { toast('BambooHR isn\u2019t connected yet — add the settings in Render first', true); return reset(); }
@@ -716,7 +722,25 @@ function renderHolidays(main) {
 function renderTimeoff(main) {
   const sortMode = S._toSort || 'date';
   const groupMode = S._toGroup || 'none';
-  const rows = S.timeoffs.filter(t => hit(memberName(t.member_id), t.project_ids.map(projectName).join(' '))).sort(sortMode === 'name'
+  const F = S._toFilter || { location: '', department: '', division: '', view: '' };
+  S._toFilter = F;
+
+  // The same People filters, applied to whoever an entry belongs to.
+  const memberById = id => S.members.find(m => m.id === id) || {};
+  const activeView = (S.views || []).find(v => String(v.id) === String(F.view));
+  const passesFilters = t => {
+    const m = memberById(t.member_id);
+    if (activeView && !(activeView.member_ids || []).includes(t.member_id)) return false;
+    if (F.location && m.location !== F.location) return false;
+    if (F.department && m.department !== F.department) return false;
+    if (F.division && (m.division || m.status) !== F.division) return false;
+    return true;
+  };
+
+  const rows = S.timeoffs
+    .filter(t => hit(memberName(t.member_id), t.project_ids.map(projectName).join(' ')))
+    .filter(passesFilters)
+    .sort(sortMode === 'name'
     ? (a, b) => memberName(a.member_id).localeCompare(memberName(b.member_id), undefined, { sensitivity: 'base' }) || a.start_date.localeCompare(b.start_date)
     : (a, b) => a.start_date.localeCompare(b.start_date) || memberName(a.member_id).localeCompare(memberName(b.member_id)));
 
@@ -780,8 +804,20 @@ function renderTimeoff(main) {
           <option value="date" ${sortMode === 'date' ? 'selected' : ''}>Time-off date (earliest first)</option>
           <option value="name" ${sortMode === 'name' ? 'selected' : ''}>Member name (A–Z)</option>
         </select></label>
-      <button class="btn-ghost" id="bambooSync" title="Import approved time-off from BambooHR">↧ Sync from BambooHR</button>
+      <button class="btn-ghost" id="bambooSync" title="Import approved leave for people already in the People section">↧ Sync time-off from BambooHR</button>
       <button class="btn-primary" id="addTo">Add time-off entry</button>
+    </div>
+    <div class="card" style="padding-bottom:12px">
+      <div class="people-filters" style="border-bottom:none;padding-bottom:0">
+        <label class="small muted" style="display:flex;align-items:center;gap:6px">Saved view
+          <select id="tfView" style="width:auto"><option value="">Everyone</option>
+            ${(S.views || []).map(v => `<option value="${v.id}" ${String(F.view) === String(v.id) ? 'selected' : ''}>${esc(v.name)}</option>`).join('')}
+          </select></label>
+        ${tfSel('tfLocation', 'Location', tfUniq('location'), F.location)}
+        ${tfSel('tfDepartment', 'Department', tfUniq('department'), F.department)}
+        ${tfSel('tfDivision', 'Employment status', tfDivisions(), F.division)}
+        ${F.location || F.department || F.division || F.view ? '<button class="btn-ghost" id="tfClear">Clear filters</button>' : ''}
+      </div>
     </div>
     ${bodyHtml}
     <p class="muted small">Heads-up: only entries marked <strong>Approved</strong> are included in Slack notifications. If someone isn't in the member dropdown, add them under Team Members first.</p>`;
@@ -833,10 +869,16 @@ function renderTimeoff(main) {
   };
   $('#toSort').onchange = e => { S._toSort = e.target.value; renderTimeoff(main); };
   $('#toGroup').onchange = e => { S._toGroup = e.target.value; renderTimeoff(main); };
+  const setTF = (k, v) => { F[k] = v; renderTimeoff(main); };
+  $('#tfView').onchange = e => setTF('view', e.target.value);
+  $('#tfLocation').onchange = e => setTF('location', e.target.value);
+  $('#tfDepartment').onchange = e => setTF('department', e.target.value);
+  $('#tfDivision').onchange = e => setTF('division', e.target.value);
+  if ($('#tfClear')) $('#tfClear').onclick = () => { S._toFilter = { location: '', department: '', division: '', view: '' }; renderTimeoff(main); };
   $('#bambooSync').onclick = async () => {
     const btn = $('#bambooSync'); if (btn.disabled) return;
     btn.disabled = true; btn.textContent = 'Checking BambooHR…';
-    const reset = () => { btn.disabled = false; btn.textContent = '↧ Sync from BambooHR'; };
+    const reset = () => { btn.disabled = false; btn.textContent = '↧ Sync time-off from BambooHR'; };
     try {
       const status = await api('/bamboo/status');
       if (!status.configured) { toast('BambooHR isn\u2019t connected yet — add the settings in Render first', true); return reset(); }
@@ -1046,7 +1088,7 @@ function renderSettings(main) {
       ${(() => {
         const lm = (S.settings.location_map) || {}, dh = (S.settings.division_holidays) || {};
         const locs = Object.keys(lm).sort(), divs = Object.keys(dh).sort();
-        if (!locs.length && !divs.length) return '<div class="empty">Nothing to map yet — run <strong>Sync from BambooHR</strong> in People and the values will appear here.</div>';
+        if (!locs.length && !divs.length) return '<div class="empty">Nothing to map yet — run <strong>Sync people from BambooHR</strong> in People and the values will appear here.</div>';
         return `<div class="row" style="align-items:flex-start;gap:24px">
           <div style="flex:1">
             <h3 style="font-size:14px;margin:0 0 6px">Location → holidays</h3>
@@ -1133,7 +1175,7 @@ function renderSettings(main) {
   api('/bamboo/status').then(s => {
     const el = $('#bambooStatus');
     if (el) el.innerHTML = s.configured
-      ? '<span class="badge approved">\u2713 Connected</span> BambooHR is set up — use <strong>Sync from BambooHR</strong> in Time-Off Entries.'
+      ? '<span class="badge approved">\u2713 Connected</span> BambooHR is set up. Sync <strong>people</strong> first (People section), then <strong>time-off</strong> (Time-Off Entries).'
       : '<span class="badge pending">Not connected</span> Add the BambooHR settings on the server to enable syncing.';
   }).catch(() => {});
   api('/jira/status').then(s => {
