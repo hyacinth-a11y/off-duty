@@ -72,7 +72,7 @@ async function fetchOnboardingIssues() {
   const issues = [];
   let nextPageToken = null;
   for (let page = 0; page < 10; page++) { // safety cap: 10 pages
-    const params = new URLSearchParams({ jql, fields: 'summary,description', maxResults: '100' });
+    const params = new URLSearchParams({ jql, fields: 'summary,description,status', maxResults: '100' });
     if (nextPageToken) params.set('nextPageToken', nextPageToken);
     const data = await jiraGet(`/search/jql?${params.toString()}`);
     for (const it of (data.issues || [])) issues.push(it);
@@ -93,14 +93,29 @@ async function syncFromJira(dry = false) {
   try { issues = await fetchOnboardingIssues(); }
   catch (e) { return { ok: false, error: e.message }; }
 
-  const created = [], skipped = [];
+  const created = [], skipped = [], restatused = [];
+  const byKey = new Map(db.projects.filter(p => p.jira_key).map(p => [p.jira_key, p]));
+
   for (const it of issues) {
     const key = it.key;
     if (keyNumber(key) < c.minNumber) { continue; } // before the starting point
-    if (existingKeys.has(key)) { skipped.push({ key, reason: 'already imported' }); continue; }
     const summary = (it.fields.summary || '').trim() || key;
     const manager = parseManager(it.fields.description);
-    if (dry) { created.push({ key, name: summary, manager: manager || '(none)' }); continue; }
+    // whatever the Jira workflow calls it — "In Progress", "On Hold", ...
+    const status = ((it.fields.status || {}).name || '').trim();
+
+    if (existingKeys.has(key)) {
+      // already imported: keep everything, but follow Jira's status if it moved
+      const existing = byKey.get(key);
+      if (existing && status && existing.status !== status) {
+        restatused.push({ key, name: existing.name, from: existing.status || '(none)', to: status });
+        if (!dry) existing.status = status;
+      } else {
+        skipped.push({ key, reason: 'already imported' });
+      }
+      continue;
+    }
+    if (dry) { created.push({ key, name: summary, manager: manager || '(none)', status: status || '(none)' }); continue; }
     const p = {
       id: nextId(),
       created_at: new Date().toISOString(),
@@ -108,6 +123,7 @@ async function syncFromJira(dry = false) {
       jira_name: summary,
       name: summary,
       manager,
+      status,
       notify_via_email: false,
       contacts: [],
       channels: [],
@@ -121,13 +137,14 @@ async function syncFromJira(dry = false) {
     existingKeys.add(key);
     created.push({ key, name: summary, manager: manager || '(none)' });
   }
-  if (!dry && created.length) save();
+  if (!dry && (created.length || restatused.length)) save();
   return {
     ok: true,
     mode: dry ? 'preview' : 'live',
     imported: dry ? 0 : created.length,
     would_import: dry ? created.length : undefined,
     created,
+    restatused,
     skipped_count: skipped.length,
   };
 }

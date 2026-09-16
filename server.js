@@ -88,6 +88,7 @@ app.post('/api/projects', (req, res) => {
     created_at: new Date().toISOString(),
     jira_name: b.jira_name || '',
     manager: b.manager || '',
+    status: b.status || '',
     name: b.name,
     workspace_id: b.workspace_id || null,
     type: b.type === 'external' ? 'external' : 'internal',
@@ -107,6 +108,7 @@ app.put('/api/projects/:id', (req, res) => {
   Object.assign(p, {
     jira_name: b.jira_name ?? p.jira_name,
     manager: b.manager ?? p.manager ?? '',
+    status: b.status ?? p.status ?? '',
     name: b.name ?? p.name,
     workspace_id: b.workspace_id !== undefined ? b.workspace_id : p.workspace_id,
     type: b.type ?? p.type,
@@ -168,7 +170,7 @@ app.get('/api/views', (req, res) => ok(res, db().views || []));
 app.post('/api/views', (req, res) => {
   const d = db();
   d.views = d.views || [];
-  const v = { id: nextId(), name: (req.body.name || 'Untitled view').trim(), member_ids: req.body.member_ids || [] };
+  const v = { id: nextId(), name: (req.body.name || 'Untitled view').trim(), kind: req.body.kind === 'projects' ? 'projects' : 'people', member_ids: req.body.member_ids || [], project_ids: req.body.project_ids || [] };
   d.views.push(v); save(); ok(res, v);
 });
 app.put('/api/views/:id', (req, res) => {
@@ -176,6 +178,7 @@ app.put('/api/views/:id', (req, res) => {
   if (!v) return res.status(404).json({ error: 'View not found' });
   if (req.body.name !== undefined) v.name = req.body.name.trim();
   if (Array.isArray(req.body.member_ids)) v.member_ids = req.body.member_ids;
+  if (Array.isArray(req.body.project_ids)) v.project_ids = req.body.project_ids;
   save(); ok(res, v);
 });
 app.delete('/api/views/:id', (req, res) => {
