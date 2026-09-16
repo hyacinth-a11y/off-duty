@@ -422,6 +422,10 @@ app.post('/api/bamboo/sync', async (req, res) => {
 // ---------------- Jira sync ----------------
 const { syncFromJira, isConfigured: jiraConfigured } = require('./jira');
 app.get('/api/jira/status', (req, res) => ok(res, { configured: jiraConfigured() }));
+app.get('/api/jira/debug', async (req, res) => {
+  const { debugJira } = require('./jira');
+  ok(res, await debugJira());
+});
 app.post('/api/jira/sync', async (req, res) => {
   ok(res, await syncFromJira(req.query.dry === '1'));
 });

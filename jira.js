@@ -110,7 +110,6 @@ async function syncFromJira(dry = false) {
 
   for (const it of issues) {
     const key = it.key;
-    if (keyNumber(key) < c.minNumber) { continue; } // before the starting point
     const summary = (it.fields.summary || '').trim() || key;
     const manager = parseManager(it.fields.description);
     // whatever the Jira workflow calls it — "In Progress", "On Hold", ...
@@ -142,6 +141,10 @@ async function syncFromJira(dry = false) {
       byName.delete(norm(summary));
       continue;
     }
+    // The cutoff only limits which tickets become NEW projects. Linking and
+    // status updates above apply to every ticket, so older projects that were
+    // added by hand still track their Jira status.
+    if (keyNumber(key) < c.minNumber) { skipped.push({ key, reason: 'older than the import cutoff' }); continue; }
     if (dry) { created.push({ key, name: summary, manager: manager || '(none)', status: status || '(none)' }); continue; }
     const p = {
       id: nextId(),
@@ -177,4 +180,39 @@ async function syncFromJira(dry = false) {
   };
 }
 
-module.exports = { syncFromJira, isConfigured };
+// Diagnostic: what Jira returns, and how each ticket lines up with the projects
+// already in the app. Shows why something did or didn't match.
+async function debugJira() {
+  if (!isConfigured()) return { ok: false, error: 'Jira is not configured' };
+  const c = config();
+  let issues;
+  try { issues = await fetchOnboardingIssues(); }
+  catch (e) { return { ok: false, error: e.message }; }
+  const db = load();
+  const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const byKey = new Map(db.projects.filter(p => p.jira_key).map(p => [p.jira_key, p]));
+  const byName = new Map();
+  for (const p of db.projects) for (const n of [p.jira_name, p.name]) { const k = norm(n); if (k && !byName.has(k)) byName.set(k, p); }
+
+  return {
+    ok: true,
+    import_cutoff: `${c.projectKey}-${c.minNumber} and above become new projects; all tickets can link/update status`,
+    tickets_returned: issues.length,
+    tickets: issues.slice(0, 60).map(it => {
+      const key = it.key;
+      const summary = (it.fields.summary || '').trim();
+      const status = ((it.fields.status || {}).name || '') || '(no status field)';
+      const viaKey = byKey.get(key);
+      const viaName = byName.get(norm(summary));
+      return {
+        key, summary, jira_status: status,
+        matched: viaKey ? `by key -> "${viaKey.name}" (app status: ${viaKey.status || 'none'})`
+               : viaName ? `by name -> "${viaName.name}" (app status: ${viaName.status || 'none'})`
+               : 'no match in app',
+      };
+    }),
+    app_projects_without_key: db.projects.filter(p => !p.jira_key && !p.archived).map(p => p.name),
+  };
+}
+
+module.exports = { syncFromJira, debugJira, isConfigured };
