@@ -127,10 +127,17 @@ dialog::backdrop { background: rgba(23, 41, 59, 0.45); }
 
 .toast {
   position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%);
-  background: var(--ink); color: #fff; padding: 10px 18px; border-radius: 999px;
-  font-size: 14px; z-index: 100; max-width: 90vw;
+  /* fixed colours on purpose: --ink flips to near-white in dark mode, which
+     used to make this white-on-white and unreadable */
+  background: #17293b; color: #ffffff; padding: 10px 18px; border-radius: 999px;
+  font-size: 14px; font-weight: 500; z-index: 100; max-width: 90vw;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
 }
-.toast.error { background: var(--coral); }
+.toast.error { background: var(--coral); color: #ffffff; }
+[data-theme="dark"] .toast {
+  background: #26333f; color: #ffffff; border: 1px solid #3a4854;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+}
 .empty { color: var(--ink-soft); padding: 18px 4px; }
 .holiday-dot { color: var(--mango); }
 
