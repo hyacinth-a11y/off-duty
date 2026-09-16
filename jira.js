@@ -93,8 +93,20 @@ async function syncFromJira(dry = false) {
   try { issues = await fetchOnboardingIssues(); }
   catch (e) { return { ok: false, error: e.message }; }
 
-  const created = [], skipped = [], restatused = [];
+  const created = [], skipped = [], restatused = [], linked = [];
   const byKey = new Map(db.projects.filter(p => p.jira_key).map(p => [p.jira_key, p]));
+  // Projects added by hand have no Jira key, so they can never be matched by key.
+  // Fall back to matching on the project or Jira name; once matched we store the
+  // key so every later sync is exact and renaming can't break it.
+  const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const byName = new Map();
+  for (const p of db.projects) {
+    if (p.jira_key) continue;
+    for (const n of [p.jira_name, p.name]) {
+      const k = norm(n);
+      if (k && !byName.has(k)) byName.set(k, p);
+    }
+  }
 
   for (const it of issues) {
     const key = it.key;
@@ -113,6 +125,21 @@ async function syncFromJira(dry = false) {
       } else {
         skipped.push({ key, reason: 'already imported' });
       }
+      continue;
+    }
+
+    // Not imported yet — but a project with this name may already exist here
+    // (added by hand). Adopt it instead of creating a duplicate.
+    const match = byName.get(norm(summary));
+    if (match) {
+      linked.push({ key, name: match.name, status: status || '(none)', was: match.status || '(none)' });
+      if (!dry) {
+        match.jira_key = key;
+        if (!match.jira_name) match.jira_name = summary;
+        if (status) match.status = status;
+        if (!match.manager && manager) match.manager = manager;
+      }
+      byName.delete(norm(summary));
       continue;
     }
     if (dry) { created.push({ key, name: summary, manager: manager || '(none)', status: status || '(none)' }); continue; }
@@ -137,7 +164,7 @@ async function syncFromJira(dry = false) {
     existingKeys.add(key);
     created.push({ key, name: summary, manager: manager || '(none)' });
   }
-  if (!dry && (created.length || restatused.length)) save();
+  if (!dry && (created.length || restatused.length || linked.length)) save();
   return {
     ok: true,
     mode: dry ? 'preview' : 'live',
@@ -145,6 +172,7 @@ async function syncFromJira(dry = false) {
     would_import: dry ? created.length : undefined,
     created,
     restatused,
+    linked,
     skipped_count: skipped.length,
   };
 }

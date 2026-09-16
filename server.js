@@ -107,6 +107,7 @@ app.put('/api/projects/:id', (req, res) => {
   const b = req.body;
   Object.assign(p, {
     jira_name: b.jira_name ?? p.jira_name,
+    jira_key: b.jira_key !== undefined ? b.jira_key : p.jira_key,
     manager: b.manager ?? p.manager ?? '',
     status: b.status ?? p.status ?? '',
     name: b.name ?? p.name,
