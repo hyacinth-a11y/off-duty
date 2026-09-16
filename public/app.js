@@ -117,6 +117,13 @@ const tfSel = (id, label, opts, val) => `<label class="small muted" style="displ
   <select id="${id}" style="width:auto"><option value="">All</option>
     ${opts.map(o => `<option value="${esc(o)}" ${val === o ? 'selected' : ''}>${esc(o)}</option>`).join('')}
   </select></label>`;
+// Project statuses. Jira is the source, so whatever it reports is accepted —
+// these are just the ones we know about for colouring and the picker.
+const PROJECT_STATUSES = ['In Planning', 'In Progress', 'On Hold', 'Support', 'Closed'];
+const statusClass = s => ({
+  'in planning': 'planning', 'in progress': 'progress', 'on hold': 'hold',
+  'support': 'support', 'closed': 'closed',
+}[String(s || '').toLowerCase()] || 'other');
 const wsName = id => (S.workspaces.find(w => w.id === id) || {}).name || '—';
 const byName = (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }); // alphabetical, by project/member name
 const fmtDT = iso => new Date(iso).toLocaleString('en-US', { timeZone: (S.settings && S.settings.timezone) || 'Asia/Manila', month: 'long', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
@@ -175,7 +182,26 @@ function renderProjects(main) {
   // Match by project fields, contacts, channels — AND by any assigned member's name,
   // so typing a person shows every project they're on.
   const memberMatch = p => q && (p.member_ids || []).some(id => memberName(id).toLowerCase().includes(q));
-  const plist = [...S.projects].filter(p => !p.archived).sort(byName).filter(p =>
+  const PF = S._projFilter || { status: '', manager: '', schedule: '', view: '' };
+  S._projFilter = PF;
+  const schedLabel = p => {
+    const s = p.sched;
+    if (!s || !s.enabled) return 'No schedule';
+    const D = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    return s.type === 'weekly' ? `Weekly ${D[s.dow]} ${s.time}`
+      : s.type === 'biweekly' ? `1st & 3rd ${D[s.dow]} ${s.time}`
+      : s.type === 'monthly' ? `Day ${s.day} ${s.time}`
+      : `Day ${s.day1} & ${s.day2} ${s.time}`;
+  };
+  const projView = (S.views || []).find(v => v.kind === 'projects' && String(v.id) === String(PF.view));
+  const projPasses = p => {
+    if (projView && !(projView.project_ids || []).includes(p.id)) return false;
+    if (PF.status && (p.status || '') !== PF.status) return false;
+    if (PF.manager && (p.manager || '') !== PF.manager) return false;
+    if (PF.schedule && schedLabel(p) !== PF.schedule) return false;
+    return true;
+  };
+  const plist = [...S.projects].filter(p => !p.archived).filter(projPasses).sort(byName).filter(p =>
     hit(
       p.name,
       p.jira_name,
@@ -193,9 +219,23 @@ function renderProjects(main) {
       <button class="btn-ghost" id="jiraSync" title="Import new onboarding tickets from Jira">↧ Sync from Jira</button>
       <button class="btn-primary" id="addProject">Add project</button>
     </div>
+    <div class="card" style="padding-bottom:12px">
+      <div class="people-filters" style="border-bottom:none;padding-bottom:0">
+        <label class="small muted" style="display:flex;align-items:center;gap:6px">Saved view
+          <select id="pfView" style="width:auto"><option value="">All projects</option>
+            ${(S.views || []).filter(v => v.kind === 'projects').map(v => `<option value="${v.id}" ${String(PF.view) === String(v.id) ? 'selected' : ''}>${esc(v.name)}</option>`).join('')}
+          </select></label>
+        ${tfSel('pfStatus', 'Status', [...new Set(S.projects.filter(p => !p.archived).map(p => p.status).filter(Boolean))].sort(), PF.status)}
+        ${tfSel('pfManager', 'Manager', [...new Set(S.projects.filter(p => !p.archived).map(p => p.manager).filter(Boolean))].sort(), PF.manager)}
+        ${tfSel('pfSchedule', 'Schedule', [...new Set(S.projects.filter(p => !p.archived).map(schedLabel))].sort(), PF.schedule)}
+        ${PF.status || PF.manager || PF.schedule || PF.view ? '<button class="btn-ghost" id="pfClear">Clear filters</button>' : ''}
+        <span class="spacer"></span>
+        <button class="btn-ghost" id="projViews">Saved views…</button>
+      </div>
+    </div>
     <div class="card">
       ${plist.length ? `<div class="table-scroll"><table class="projects-table"><thead><tr>
-        <th>Project</th><th>Jira</th><th>Manager</th><th>Slack channels</th><th>Auto-send</th><th>Contacts</th><th></th>
+        <th>Project</th><th>Jira</th><th>Manager</th><th>Slack channels</th><th>Auto-send</th><th>Status</th><th></th>
       </tr></thead><tbody>
       ${plist.map(p => `<tr>
         <td><strong>${esc(p.name)}</strong>${isNew(p) ? ' <span class="badge-new">New</span>' : ''}${q && memberMatch(p) ? `<div class="muted small">members: ${esc((p.member_ids || []).map(memberName).join(', '))}</div>` : ''}</td>
@@ -214,7 +254,7 @@ function renderProjects(main) {
             : `day ${s.day1} & ${s.day2}`;
           return `${esc(txt)}<br>${esc(s.time || '09:00')}`;
         })()}</td>
-        <td class="small contacts-cell" title="${esc(p.contacts.join(', '))}">${p.contacts.length ? esc(p.contacts.slice(0, 2).join(', ')) + (p.contacts.length > 2 ? ` <span class="chip">+${p.contacts.length - 2}</span>` : '') : '—'}</td>
+        <td class="small">${p.status ? `<span class="pstatus ${statusClass(p.status)}">${esc(p.status)}</span>` : '<span class="muted">—</span>'}</td>
         <td class="row-actions">
           <div class="act-wrap">
             <button class="act-toggle" title="Actions" aria-haspopup="true">
@@ -231,6 +271,56 @@ function renderProjects(main) {
       </tr>`).join('')}
       </tbody></table></div>` : `<div class="empty">${noMatch('No projects yet. Add your first project to start building notices.')}</div>`}
     </div>`;
+  const setPF = (k, v) => { PF[k] = v; renderProjects(main); };
+  $('#pfView').onchange = e => setPF('view', e.target.value);
+  $('#pfStatus').onchange = e => setPF('status', e.target.value);
+  $('#pfManager').onchange = e => setPF('manager', e.target.value);
+  $('#pfSchedule').onchange = e => setPF('schedule', e.target.value);
+  if ($('#pfClear')) $('#pfClear').onclick = () => { S._projFilter = { status: '', manager: '', schedule: '', view: '' }; renderProjects(main); };
+  $('#projViews').onclick = () => {
+    const pviews = (S.views || []).filter(v => v.kind === 'projects');
+    openModal(`
+      <h2>Saved project views</h2>
+      <p class="muted small">A named group of projects — handy for "Client work" or "My accounts".</p>
+      <div>${pviews.length ? pviews.map(v => `<div class="em-row">
+        <span class="em-value"><strong>${esc(v.name)}</strong> <span class="muted small">— ${(v.project_ids || []).length} projects</span></span>
+        <button class="btn-link" data-pvedit="${v.id}">Edit projects</button>
+        <button class="btn-danger" data-pvdel="${v.id}">Delete</button></div>`).join('') : '<div class="empty">No saved project views yet.</div>'}</div>
+      <label class="field" style="margin-top:12px"><span>New view name</span><input type="text" id="pvName" placeholder="e.g. Client work"></label>
+      <div class="modal-actions"><button class="btn-ghost" id="mCancel">Close</button><button class="btn-primary" id="pvAdd">Create view</button></div>
+    `, body => {
+      $('#mCancel', body).onclick = closeModal;
+      busyClick($('#pvAdd', body), async () => {
+        const name = $('#pvName', body).value.trim();
+        if (!name) return toast('Give the view a name', true);
+        await api('/views', 'POST', { name, kind: 'projects', project_ids: [] });
+        closeModal(); await reload('View created — use "Edit projects" to add some');
+      });
+      body.querySelectorAll('[data-pvdel]').forEach(b => b.onclick = async () => {
+        if (!confirm('Delete this saved view? The projects themselves are not affected.')) return;
+        await api('/views/' + b.dataset.pvdel, 'DELETE'); closeModal(); await reload('View deleted');
+      });
+      body.querySelectorAll('[data-pvedit]').forEach(b => b.onclick = () => {
+        const v = pviews.find(x => x.id === +b.dataset.pvedit);
+        const chosen = new Set(v.project_ids || []);
+        openModal(`
+          <h2>Which projects are in "${esc(v.name)}"?</h2>
+          <div style="max-height:50vh;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:8px">
+            ${[...S.projects].filter(p => !p.archived).sort(byName).map(p => `<label style="display:flex;gap:8px;align-items:center;padding:4px 2px">
+              <input type="checkbox" class="pv" value="${p.id}" ${chosen.has(p.id) ? 'checked' : ''} style="width:auto">
+              ${esc(p.name)} <span class="muted small">${esc(p.status || '')}</span></label>`).join('')}
+          </div>
+          <div class="modal-actions"><button class="btn-ghost" id="mCancel2">Cancel</button><button class="btn-primary" id="pvSave">Save view</button></div>
+        `, b2 => {
+          $('#mCancel2', b2).onclick = closeModal;
+          busyClick($('#pvSave', b2), async () => {
+            await api('/views/' + v.id, 'PUT', { project_ids: [...b2.querySelectorAll('.pv:checked')].map(i => +i.value) });
+            closeModal(); await reload('View updated');
+          });
+        });
+      });
+    });
+  };
   $('#addProject').onclick = () => projectForm();
   $('#jiraSync').onclick = async () => {
     const btn = $('#jiraSync'); if (btn.disabled) return;
@@ -243,14 +333,17 @@ function renderProjects(main) {
       }
       const preview = await api('/jira/sync?dry=1', 'POST');
       if (!preview.ok) { toast(preview.error, true); btn.disabled = false; btn.textContent = '↧ Sync from Jira'; return; }
-      if (!preview.would_import) { toast('No new Jira tickets to import — you\u2019re all caught up ✓'); btn.disabled = false; btn.textContent = '↧ Sync from Jira'; return; }
-      const list = preview.created.map(c => `• ${c.key} — ${c.name}`).join('\n');
-      if (!confirm(`Import ${preview.would_import} new project(s) from Jira?\n\n${list}\n\nYou can fill in Slack channels and members afterward.`)) {
+      const restat = preview.restatused || [];
+      if (!preview.would_import && !restat.length) { toast('No new Jira tickets and no status changes — you\u2019re all caught up ✓'); btn.disabled = false; btn.textContent = '↧ Sync from Jira'; return; }
+      const parts = [];
+      if (preview.would_import) parts.push(`NEW PROJECTS (${preview.would_import}):\n` + preview.created.map(c => `  • ${c.key} — ${c.name}${c.status && c.status !== '(none)' ? ' [' + c.status + ']' : ''}`).join('\n'));
+      if (restat.length) parts.push(`STATUS CHANGES (${restat.length}):\n` + restat.map(r => `  • ${r.name}: ${r.from} → ${r.to}`).join('\n'));
+      if (!confirm(`Sync from Jira?\n\n${parts.join('\n\n')}\n\nExisting projects keep their channels, members and schedule — only the status follows Jira.`)) {
         btn.disabled = false; btn.textContent = '↧ Sync from Jira'; return;
       }
       btn.textContent = 'Importing…';
       const r = await api('/jira/sync', 'POST');
-      if (r.ok) { await reload(`Imported ${r.imported} project(s) from Jira ✓`); }
+      if (r.ok) { await reload(`Jira: ${r.imported} imported, ${(r.restatused || []).length} status change(s) ✓`); }
       else { toast(r.error, true); btn.disabled = false; btn.textContent = '↧ Sync from Jira'; }
     } catch (e) { toast(e.message, true); btn.disabled = false; btn.textContent = '↧ Sync from Jira'; }
   };
@@ -311,7 +404,16 @@ function projectForm(p) {
       <label class="field"><span>Project name</span><input type="text" id="pName" value="${esc(p.name)}"></label>
       <label class="field"><span>Jira project name</span><input type="text" id="pJira" value="${esc(p.jira_name)}"></label>
     </div>
-    <label class="field"><span>Project manager</span><input type="text" id="pManager" value="${esc(p.manager || '')}"></label>
+    <div class="row">
+      <label class="field"><span>Project manager</span><input type="text" id="pManager" value="${esc(p.manager || '')}"></label>
+      <label class="field"><span>Status</span>
+        <select id="pStatus">
+          <option value="">—</option>
+          ${[...new Set([...PROJECT_STATUSES, ...S.projects.map(x => x.status).filter(Boolean)])].sort()
+            .map(s => `<option value="${esc(s)}" ${p.status === s ? 'selected' : ''}>${esc(s)}</option>`).join('')}
+        </select></label>
+    </div>
+    <p class="muted small" style="margin:-4px 0 10px">Status follows Jira — syncing updates it automatically, even for projects already here.</p>
     <label class="field"><span>Point of contacts (add as many as you need)</span>
       <div id="contacts">${(p.contacts.length ? p.contacts : ['']).map(contactRow).join('')}</div>
       <button type="button" class="btn-ghost" id="addContact">+ Add contact</button></label>
@@ -376,6 +478,7 @@ function projectForm(p) {
         name: $('#pName', body).value.trim(),
         jira_name: $('#pJira', body).value.trim(),
         manager: $('#pManager', body).value.trim(),
+        status: $('#pStatus', body).value,
         notify_via_email: $('#pEmail', body).checked,
         contacts: [...body.querySelectorAll('.contact')].map(i => i.value.trim()).filter(Boolean),
         channels: [...body.querySelectorAll('.channel-row')].map(r => ({

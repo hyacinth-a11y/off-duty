@@ -501,3 +501,22 @@ dialog::backdrop { background: rgba(23, 41, 59, 0.45); }
   padding-bottom: 12px; margin-bottom: 4px; border-bottom: 1px solid var(--line);
 }
 .person-open { padding: 0; font-size: inherit; text-align: left; }
+
+/* ---------- project status badges ---------- */
+.pstatus {
+  display: inline-block; padding: 2px 9px; border-radius: 999px;
+  font-size: 12px; font-weight: 600; white-space: nowrap;
+  border: 1px solid transparent;
+}
+.pstatus.planning { background: #e8eefc; color: #2a4a9c; border-color: #c9d8f5; }
+.pstatus.progress { background: #e3f4ec; color: #1f6b4a; border-color: #bfe4d2; }
+.pstatus.hold     { background: #fdf0dd; color: #8a5a10; border-color: #f3ddb4; }
+.pstatus.support  { background: #ecebfa; color: #4b3fa3; border-color: #d6d3f2; }
+.pstatus.closed   { background: #eef1f4; color: #5a6b7d; border-color: #dde4ec; }
+.pstatus.other    { background: #eef1f4; color: #5a6b7d; border-color: #dde4ec; }
+[data-theme="dark"] .pstatus.planning { background: #1d2b46; color: #a8c4f5; border-color: #2c3f63; }
+[data-theme="dark"] .pstatus.progress { background: #16302a; color: #86d9b4; border-color: #22483c; }
+[data-theme="dark"] .pstatus.hold     { background: #3a2d14; color: #f0c069; border-color: #5d4a20; }
+[data-theme="dark"] .pstatus.support  { background: #262247; color: #b7b0f0; border-color: #383163; }
+[data-theme="dark"] .pstatus.closed,
+[data-theme="dark"] .pstatus.other    { background: #222f3b; color: #9cb0c2; border-color: #33424f; }
