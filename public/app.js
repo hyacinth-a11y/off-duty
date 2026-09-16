@@ -334,10 +334,12 @@ function renderProjects(main) {
       const preview = await api('/jira/sync?dry=1', 'POST');
       if (!preview.ok) { toast(preview.error, true); btn.disabled = false; btn.textContent = '↧ Sync from Jira'; return; }
       const restat = preview.restatused || [];
-      if (!preview.would_import && !restat.length) { toast('No new Jira tickets and no status changes — you\u2019re all caught up ✓'); btn.disabled = false; btn.textContent = '↧ Sync from Jira'; return; }
+      if (!preview.would_import && !restat.length && !(preview.linked || []).length) { toast('No new Jira tickets, links or status changes — you\u2019re all caught up ✓'); btn.disabled = false; btn.textContent = '↧ Sync from Jira'; return; }
       const parts = [];
       if (preview.would_import) parts.push(`NEW PROJECTS (${preview.would_import}):\n` + preview.created.map(c => `  • ${c.key} — ${c.name}${c.status && c.status !== '(none)' ? ' [' + c.status + ']' : ''}`).join('\n'));
       if (restat.length) parts.push(`STATUS CHANGES (${restat.length}):\n` + restat.map(r => `  • ${r.name}: ${r.from} → ${r.to}`).join('\n'));
+      const linked = preview.linked || [];
+      if (linked.length) parts.push(`LINKED to existing projects (${linked.length}):\n` + linked.map(l => `  • ${l.name} ← ${l.key} [${l.status}]`).join('\n'));
       if (!confirm(`Sync from Jira?\n\n${parts.join('\n\n')}\n\nExisting projects keep their channels, members and schedule — only the status follows Jira.`)) {
         btn.disabled = false; btn.textContent = '↧ Sync from Jira'; return;
       }
@@ -403,6 +405,7 @@ function projectForm(p) {
     <div class="row">
       <label class="field"><span>Project name</span><input type="text" id="pName" value="${esc(p.name)}"></label>
       <label class="field"><span>Jira project name</span><input type="text" id="pJira" value="${esc(p.jira_name)}"></label>
+      <label class="field"><span>Jira ticket key</span><input type="text" id="pJiraKey" value="${esc(p.jira_key || '')}" placeholder="e.g. POC-82"></label>
     </div>
     <div class="row">
       <label class="field"><span>Project manager</span><input type="text" id="pManager" value="${esc(p.manager || '')}"></label>
@@ -477,6 +480,7 @@ function projectForm(p) {
       const payload = {
         name: $('#pName', body).value.trim(),
         jira_name: $('#pJira', body).value.trim(),
+        jira_key: $('#pJiraKey', body).value.trim().toUpperCase(),
         manager: $('#pManager', body).value.trim(),
         status: $('#pStatus', body).value,
         notify_via_email: $('#pEmail', body).checked,
