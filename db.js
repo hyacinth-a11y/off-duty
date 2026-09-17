@@ -12,7 +12,7 @@ const PG_URL = process.env.DATABASE_URL || '';
 
 const DEFAULT_EXTERNAL_TEMPLATE = `Hi there! :wave:
 
-The following members will be out for the month of {month}:
+The following members will be out between {month}:
 {ooo_list}
 
 The following team members will observe a holiday:
@@ -43,6 +43,7 @@ const EMPTY = {
     internal_template: DEFAULT_INTERNAL_TEMPLATE,
     // "Phillipines" -> "PH", "United States" -> "US". Filled in from Settings
     // after a People sync, so typos and new offices are a one-click fix.
+    lookahead_days: 45,   // how far ahead notices look, in days
     location_map: {},
     // Per employment status (BambooHR division): do these people observe
     // holidays at all? Contractors usually don't. Missing = yes.

@@ -435,6 +435,7 @@ app.get('/api/settings', (req, res) => ok(res, db().settings));
 app.put('/api/settings', (req, res) => {
   const s = db().settings; const b = req.body;
   if (b.timezone) s.timezone = b.timezone;
+  if (b.lookahead_days !== undefined) s.lookahead_days = Math.min(Math.max(parseInt(b.lookahead_days, 10) || 45, 7), 365);
   if (b.location_map && typeof b.location_map === 'object') s.location_map = b.location_map;
   if (b.division_holidays && typeof b.division_holidays === 'object') s.division_holidays = b.division_holidays;
   if (b.internal_template !== undefined) s.internal_template = b.internal_template || DEFAULT_INTERNAL_TEMPLATE;

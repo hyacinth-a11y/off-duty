@@ -26,21 +26,21 @@ const lastDayOfMonth = (y, m) => new Date(Date.UTC(y, m, 0)).getUTCDate();
 // still running) is kept because entries are matched by overlap. If today falls in
 // the last 7 days of the month, the window extends through the first 7 days of
 // the next month.
+// A rolling look-ahead: today through today + N days, ignoring month boundaries.
+// Month-based windows don't suit notices sent mid-month — a notice sent on the
+// 15th would stop at month end, so leave early next month got almost no warning.
+// N comes from Settings (lookahead_days), defaulting to 45.
 function reportingWindow(now = new Date()) {
-  const tz = load().settings.timezone || 'Asia/Manila';
+  const settings = load().settings || {};
+  const tz = settings.timezone || 'Asia/Manila';
+  const days = Math.min(Math.max(parseInt(settings.lookahead_days, 10) || 45, 7), 365);
   const { y, m, d } = partsInTz(now, tz);
-  const last = lastDayOfMonth(y, m);
-  const start = ymd(y, m, d); // today — past items fall out of the window
-  let end = ymd(y, m, last);
-  let extended = false;
-  if (d > last - 7) {
-    const ny = m === 12 ? y + 1 : y;
-    const nm = m === 12 ? 1 : m + 1;
-    end = ymd(ny, nm, 7);
-    extended = true;
-  }
-  const monthName = new Date(Date.UTC(y, m - 1, 1)).toLocaleString('en-US', { month: 'long', year: 'numeric' });
-  return { start, end, monthName, extended, today: ymd(y, m, d) };
+  const start = ymd(y, m, d);                       // today — past items fall out
+  const endDate = new Date(Date.UTC(y, m - 1, d + days));
+  const end = ymd(endDate.getUTCFullYear(), endDate.getUTCMonth() + 1, endDate.getUTCDate());
+  // "September 15 – October 30, 2026" reads accurately whatever the range spans
+  const monthName = fmtRange(start, end);
+  return { start, end, monthName, days, extended: false, today: start };
 }
 
 function fmtDate(s) {
@@ -148,7 +148,7 @@ function renderTemplate(template, report) {
 
   let out = template
     .replaceAll('{project}', project.name)
-    .replaceAll('{month}', win.monthName + (win.extended ? ' (incl. first week of next month)' : ''));
+    .replaceAll('{month}', win.monthName);
 
   // ---- time-off block ----
   if (ooo.length) {
