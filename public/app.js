@@ -1048,27 +1048,63 @@ async function renderProjectView(main) {
     const rep = reports[i], prev = previews[i];
     if (!rep || !prev || (!rep.ooo.length && !rep.holidayGroups.length)) return;
     if (!hit(p.name, (p.channels || []).map(c => c.name).join(' '))) return;
+    // everyone this notice is about — lets you filter by person
+    const people = new Set([
+      ...rep.ooo.map(t => t.member_id),
+      ...rep.holidayGroups.flatMap(g => (g.members || []).map(m => m.id)),
+    ]);
     for (const m of prev.messages) {
       const sentText = (m.channel.last_sent_text || '');
       const currentText = (m.text || '').replaceAll('@here', '<!here>').replaceAll('@channel', '<!channel>');
       const attention = !!m.channel.last_sent_at && sentText !== currentText; // sent before, but info changed since
-      items.push({ kind: m.channel.purpose, wsId: m.channel.workspace_id || null, p, m, attention });
+      items.push({ kind: m.channel.purpose, wsId: m.channel.workspace_id || null, people, p, m, attention });
     }
     if (prev.emailFallback) {
       const inferred = (p.channels.find(c => c.workspace_id) || {}).workspace_id || null;
-      items.push({ kind: 'email', wsId: inferred, p, text: prev.emailFallback });
+      items.push({ kind: 'email', wsId: inferred, people, p, text: prev.emailFallback });
     }
   });
   if (!items.length) { body.innerHTML = `<div class="card"><div class="empty">${noMatch('Nobody is out and no holidays fall in this period — nothing to send. 🎉')}</div></div>`; return; }
 
-  // Workspace tabs (only workspaces that actually have items)
-  const tabs = S.workspaces.filter(w => items.some(it => it.wsId === w.id)).map(w => ({ id: w.id, label: w.name }));
-  if (items.some(it => it.wsId === null)) tabs.push({ id: null, label: 'No workspace set' });
-  if (!tabs.find(t => t.id === S._pvWs) && S._pvWs !== null) S._pvWs = undefined;
-  const selected = S._pvWs !== undefined ? S._pvWs : tabs[0].id;
-  S._pvWs = selected;
+  // Filters replace the old workspace tabs
+  const NF = S._snFilter || { workspace: '', kind: '', member: '', project: '', view: '' };
+  S._snFilter = NF;
+  const snView = (S.views || []).find(v => v.kind === 'projects' && String(v.id) === String(NF.view));
+  const passes = it => {
+    if (NF.workspace) {
+      const want = NF.workspace === 'none' ? null : +NF.workspace;
+      if (it.wsId !== want) return false;
+    }
+    if (NF.kind && it.kind !== NF.kind) return false;
+    if (NF.member && !it.people.has(+NF.member)) return false;
+    if (NF.project && it.p.id !== +NF.project) return false;
+    if (snView && !(snView.project_ids || []).includes(it.p.id)) return false;
+    return true;
+  };
+  const inWs = items.filter(passes);
 
-  const inWs = items.filter(it => it.wsId === selected);
+  // options built from what's actually here
+  const wsOptions = S.workspaces.filter(w => items.some(it => it.wsId === w.id)).map(w => ({ v: String(w.id), l: w.name }));
+  if (items.some(it => it.wsId === null)) wsOptions.push({ v: 'none', l: 'No workspace set' });
+  const peopleOptions = [...new Set(items.flatMap(it => [...it.people]))]
+    .map(id => ({ v: String(id), l: memberName(id) })).sort((a, b) => a.l.localeCompare(b.l));
+  const projectOptions = [...new Map(items.map(it => [it.p.id, it.p.name])).entries()]
+    .map(([id, name]) => ({ v: String(id), l: name })).sort((a, b) => a.l.localeCompare(b.l));
+  const pick = (id, label, opts, val) => `<label class="small muted" style="display:flex;align-items:center;gap:6px">${label}
+    <select id="${id}" style="width:auto"><option value="">All</option>
+      ${opts.map(o => `<option value="${esc(o.v)}" ${String(val) === String(o.v) ? 'selected' : ''}>${esc(o.l)}</option>`).join('')}
+    </select></label>`;
+  const filterBar = `<div class="card" style="padding-bottom:12px"><div class="people-filters" style="border-bottom:none;padding-bottom:0">
+      <label class="small muted" style="display:flex;align-items:center;gap:6px">Saved view
+        <select id="snView" style="width:auto"><option value="">All projects</option>
+          ${(S.views || []).filter(v => v.kind === 'projects').map(v => `<option value="${v.id}" ${String(NF.view) === String(v.id) ? 'selected' : ''}>${esc(v.name)}</option>`).join('')}
+        </select></label>
+      ${pick('snWs', 'Workspace', wsOptions, NF.workspace)}
+      ${pick('snKind', 'Channel type', [{ v: 'internal', l: 'Internal' }, { v: 'external', l: 'External' }, { v: 'email', l: 'Email' }], NF.kind)}
+      ${pick('snMember', 'Person', peopleOptions, NF.member)}
+      ${pick('snProject', 'Project', projectOptions, NF.project)}
+      ${NF.workspace || NF.kind || NF.member || NF.project || NF.view ? '<button class="btn-ghost" id="snClear">Clear filters</button>' : ''}
+    </div></div>`;
   const attentionCount = inWs.filter(it => it.attention).length;
   const group = (title, kind, hint) => {
     const rows = inWs.filter(it => it.kind === kind).sort((a, b) => (b.attention ? 1 : 0) - (a.attention ? 1 : 0)); // attention first
@@ -1081,12 +1117,18 @@ async function renderProjectView(main) {
 
   body.innerHTML = `
     ${attentionCount ? `<div class="attention-banner">⚠️ <strong>${attentionCount} channel(s)</strong> have new or changed time-off info since their last notice — they're marked below and sorted to the top.</div>` : ''}
-    <div class="ws-tabs">${tabs.map(t => `<button class="ws-tab ${t.id === selected ? 'active' : ''}" data-ws="${t.id === null ? 'null' : t.id}">${esc(t.label)}</button>`).join('')}</div>
+    ${filterBar}
     ${group('Internal', 'internal', 'nothing to send')}
     ${group('External', 'external', 'nothing to send')}
     ${group('Emails', 'email', 'no email-only projects')}`;
 
-  body.querySelectorAll('.ws-tab').forEach(t => t.onclick = () => { S._pvWs = t.dataset.ws === 'null' ? null : +t.dataset.ws; renderProjectView(main); });
+  const setNF = (k, v) => { NF[k] = v; renderProjectView(main); };
+  $('#snView').onchange = e => setNF('view', e.target.value);
+  $('#snWs').onchange = e => setNF('workspace', e.target.value);
+  $('#snKind').onchange = e => setNF('kind', e.target.value);
+  $('#snMember').onchange = e => setNF('member', e.target.value);
+  $('#snProject').onchange = e => setNF('project', e.target.value);
+  if ($('#snClear')) $('#snClear').onclick = () => { S._snFilter = { workspace: '', kind: '', member: '', project: '', view: '' }; renderProjectView(main); };
 
   body.querySelectorAll('.ch-send').forEach(btn => btn.onclick = async e => {
     e.preventDefault(); e.stopPropagation(); // don't toggle the row open/closed
