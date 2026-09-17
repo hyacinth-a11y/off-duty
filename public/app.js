@@ -1286,6 +1286,11 @@ function renderSettings(main) {
       <label class="field"><span>Internal template (internal channels)</span><textarea id="intTpl">${esc(S.settings.internal_template)}</textarea></label>
       <div class="row">
         <label class="field"><span>Scheduler timezone (IANA name)</span><input type="text" id="tzInput" value="${esc(S.settings.timezone)}"></label>
+        <label class="field"><span>How far ahead notices look</span>
+          <select id="lookahead" style="width:auto">
+            ${[14, 21, 30, 45, 60, 90].map(n => `<option value="${n}" ${(S.settings.lookahead_days || 45) === n ? 'selected' : ''}>${n} days</option>`).join('')}
+          </select></label>
+        <p class="muted small" style="margin-top:-4px">Every notice covers today through this many days ahead, so leave early next month still appears in a mid-month notice. Right now that means <strong>${fmt(S.win.start)} → ${fmt(S.win.end)}</strong>.</p>
       </div>
       <button class="btn-primary" id="saveSettings">Save settings</button>
     </div>`;
@@ -1338,7 +1343,7 @@ function renderSettings(main) {
   main.querySelectorAll('[data-wdel]').forEach(b => b.onclick = async () => { await api('/workspaces/' + b.dataset.wdel, 'DELETE'); await reload('Deleted'); });
   busyClick($('#saveSettings'), async () => {
     try {
-      await api('/settings', 'PUT', { external_template: $('#extTpl').value, internal_template: $('#intTpl').value, timezone: $('#tzInput').value.trim() });
+      await api('/settings', 'PUT', { external_template: $('#extTpl').value, internal_template: $('#intTpl').value, timezone: $('#tzInput').value.trim(), lookahead_days: +$('#lookahead').value });
       await reload('Settings saved');
     } catch (e) { toast(e.message, true); }
   });
