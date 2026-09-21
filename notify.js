@@ -187,7 +187,9 @@ function renderTemplate(template, report) {
 
 // ---------- Slack ----------
 async function slackApi(token, method, payload) {
+  // a hung request would stall the whole scheduler, so cap it
   const res = await fetch(`https://slack.com/api/${method}`, {
+    signal: AbortSignal.timeout(15000),
     method: 'POST',
     headers: { 'Content-Type': 'application/json; charset=utf-8', Authorization: `Bearer ${token}` },
     body: JSON.stringify(payload),
@@ -297,6 +299,7 @@ function buildMessages(projectId, now = new Date()) {
 // Post via an Incoming Webhook URL (tied to one channel; no token or invite needed).
 async function postWebhook(url, text) {
   const res = await fetch(url, {
+    signal: AbortSignal.timeout(15000),
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ text }),

@@ -72,9 +72,26 @@ function describe(sched) {
 // marked the day done. A run that arrives while another is in flight simply
 // waits for it and reports its result.
 let inFlight = null;
+let inFlightSince = 0;
+const STALE_RUN_MS = 3 * 60 * 1000;   // a run this old is assumed dead
+
 function runDueSchedules(log = () => {}, dry = false) {
-  if (inFlight) return inFlight.then(() => ({ skipped: true, note: 'another run was already in progress' }));
-  inFlight = doRun(log, dry).finally(() => { inFlight = null; });
+  // A dry run sends nothing, so it must never be blocked — it's the diagnostic
+  // you reach for when something looks stuck.
+  if (dry) return doRun(log, true);
+
+  if (inFlight) {
+    const age = Date.now() - inFlightSince;
+    if (age < STALE_RUN_MS) {
+      return Promise.resolve({ skipped: true, note: `another run has been going for ${Math.round(age / 1000)}s — skipping this ping` });
+    }
+    // Previous run never finished (a hung network call, say). Let it go rather
+    // than blocking every future ping forever.
+    log(`[auto-send] abandoning a stuck run after ${Math.round(age / 1000)}s`);
+    inFlight = null;
+  }
+  inFlightSince = Date.now();
+  inFlight = doRun(log, false).finally(() => { inFlight = null; });
   return inFlight;
 }
 
