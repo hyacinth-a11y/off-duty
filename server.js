@@ -419,7 +419,18 @@ app.post('/api/bamboo/sync', async (req, res) => {
   ok(res, await syncFromBamboo(req.query.dry === '1'));
 });
 
-// ---------------- Jira sync ----------------
+// ---------------- Portfolio (project source) sync ----------------
+const { syncFromPortfolio, isConfigured: portfolioConfigured } = require('./portfolio');
+app.get('/api/portfolio/status', (req, res) => ok(res, { configured: portfolioConfigured() }));
+app.get('/api/portfolio/debug', async (req, res) => {
+  const { debugPortfolio } = require('./portfolio');
+  ok(res, await debugPortfolio());
+});
+app.post('/api/portfolio/sync', async (req, res) => {
+  ok(res, await syncFromPortfolio(req.query.dry === '1'));
+});
+
+// ---------------- Jira sync (legacy — kept as a fallback) ----------------
 const { syncFromJira, isConfigured: jiraConfigured } = require('./jira');
 app.get('/api/jira/status', (req, res) => ok(res, { configured: jiraConfigured() }));
 app.get('/api/jira/debug', async (req, res) => {
