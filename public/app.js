@@ -216,7 +216,7 @@ function renderProjects(main) {
     <div class="section-head">
       <h1>Projects</h1><p>Source of truth for every project, its contacts, and its Slack channels. Search a member's name to see their projects.</p>
       <span class="spacer"></span>
-      <button class="btn-ghost" id="jiraSync" title="Import new onboarding tickets from Jira">↧ Sync from Jira</button>
+      <button class="btn-ghost" id="portfolioSync" title="Import projects and statuses from the Portfolio app">↧ Sync projects</button>
       <button class="btn-primary" id="addProject">Add project</button>
     </div>
     <div class="card" style="padding-bottom:12px">
@@ -322,33 +322,35 @@ function renderProjects(main) {
     });
   };
   $('#addProject').onclick = () => projectForm();
-  $('#jiraSync').onclick = async () => {
-    const btn = $('#jiraSync'); if (btn.disabled) return;
-    btn.disabled = true; btn.textContent = 'Checking Jira…';
+  $('#portfolioSync').onclick = async () => {
+    const btn = $('#portfolioSync'); if (btn.disabled) return;
+    btn.disabled = true; btn.textContent = 'Checking…';
+    const reset = () => { btn.disabled = false; btn.textContent = '↧ Sync projects'; };
     try {
-      const status = await api('/jira/status');
+      const status = await api('/portfolio/status');
       if (!status.configured) {
-        toast('Jira isn\u2019t connected yet — add the Jira settings in Render first (ask Claude for the steps)', true);
-        btn.disabled = false; btn.textContent = '↧ Sync from Jira'; return;
+        toast('The project source isn\u2019t connected yet — add PORTFOLIO_URL and PORTFOLIO_KEY in Render', true);
+        return reset();
       }
-      const preview = await api('/jira/sync?dry=1', 'POST');
-      if (!preview.ok) { toast(preview.error, true); btn.disabled = false; btn.textContent = '↧ Sync from Jira'; return; }
-      const restat = preview.restatused || [];
-      if (!preview.would_import && !restat.length && !(preview.linked || []).length) { toast('No new Jira tickets, links or status changes — you\u2019re all caught up ✓'); btn.disabled = false; btn.textContent = '↧ Sync from Jira'; return; }
+      const p = await api('/portfolio/sync?dry=1', 'POST');
+      if (!p.ok) { toast(p.error, true); return reset(); }
+      const restat = p.restatused || [], linked = p.linked || [];
+      if (!p.would_import && !restat.length && !linked.length) {
+        toast(`Nothing to change — ${p.tickets_seen} projects checked, all up to date \u2713`);
+        return reset();
+      }
       const parts = [];
-      if (preview.would_import) parts.push(`NEW PROJECTS (${preview.would_import}):\n` + preview.created.map(c => `  • ${c.key} — ${c.name}${c.status && c.status !== '(none)' ? ' [' + c.status + ']' : ''}`).join('\n'));
-      if (restat.length) parts.push(`STATUS CHANGES (${restat.length}):\n` + restat.map(r => `  • ${r.name}: ${r.from} → ${r.to}`).join('\n'));
-      const linked = preview.linked || [];
-      if (linked.length) parts.push(`LINKED to existing projects (${linked.length}):\n` + linked.map(l => `  • ${l.name} ← ${l.key} [${l.status}]`).join('\n'));
-      if (!confirm(`Sync from Jira?\n\n${parts.join('\n\n')}\n\nExisting projects keep their channels, members and schedule — only the status follows Jira.`)) {
-        btn.disabled = false; btn.textContent = '↧ Sync from Jira'; return;
-      }
-      btn.textContent = 'Importing…';
-      const r = await api('/jira/sync', 'POST');
-      if (r.ok) { await reload(`Jira: ${r.imported} imported, ${(r.restatused || []).length} status change(s) ✓`); }
-      else { toast(r.error, true); btn.disabled = false; btn.textContent = '↧ Sync from Jira'; }
-    } catch (e) { toast(e.message, true); btn.disabled = false; btn.textContent = '↧ Sync from Jira'; }
+      if (p.would_import) parts.push(`NEW PROJECTS (${p.would_import}):\n` + p.created.slice(0, 15).map(c => `  \u2022 ${c.key} — ${c.name} [${c.status}]`).join('\n') + (p.would_import > 15 ? `\n  …and ${p.would_import - 15} more` : ''));
+      if (linked.length) parts.push(`LINKED to existing projects (${linked.length}):\n` + linked.slice(0, 15).map(l => `  \u2022 ${l.name} \u2190 ${l.key} [${l.status}]`).join('\n'));
+      if (restat.length) parts.push(`STATUS CHANGES (${restat.length}):\n` + restat.slice(0, 15).map(r => `  \u2022 ${r.name}: ${r.from} \u2192 ${r.to}`).join('\n'));
+      if (!confirm(`Sync projects?\n\n${parts.join('\n\n')}\n\nExisting projects keep their channels, members and schedule — only the status follows the source.`)) return reset();
+      btn.textContent = 'Syncing…';
+      const r = await api('/portfolio/sync', 'POST');
+      if (r.ok) await reload(`${r.imported} imported, ${(r.linked || []).length} linked, ${(r.restatused || []).length} status change(s) \u2713`);
+      else { toast(r.error, true); reset(); }
+    } catch (e) { toast(e.message, true); reset(); }
   };
+  $('#addProject').onclick = () => projectForm();
   // Row actions dropdown: one open at a time, closes on outside click or Esc
   const closeMenus = () => main.querySelectorAll('.act-menu').forEach(m => {
     m.hidden = true;
@@ -1265,9 +1267,9 @@ function renderSettings(main) {
       <p class="muted small" style="margin-top:8px">Imports approved time-off so it doesn't have to be entered twice. <strong>Only people in your Team Members list are synced</strong> — that list is the filter. Set up on the server with <span class="mono">BAMBOO_SUBDOMAIN</span> and <span class="mono">BAMBOO_API_KEY</span> (BambooHR → your name → API Keys).</p>
     </div>
 
-    <div class="card"><h2>Jira connection</h2>
-      <div id="jiraStatus" class="muted small">Checking…</div>
-      <p class="muted small" style="margin-top:8px">Connects to your onboarding project so <strong>Sync from Jira</strong> (in the Projects section) can import new tickets as projects. Set up on the server with <span class="mono">JIRA_BASE_URL</span>, <span class="mono">JIRA_EMAIL</span>, and <span class="mono">JIRA_TOKEN</span> (get a token at id.atlassian.com → Security → API tokens).</p>
+    <div class="card"><h2>Project source connection</h2>
+      <div id="portfolioStatus" class="muted small">Checking…</div>
+      <p class="muted small" style="margin-top:8px">Pulls projects and their statuses from your Portfolio app, so <strong>Sync projects</strong> (in the Projects section) keeps this list in step. Set up on the server with <span class="mono">PORTFOLIO_URL</span> and <span class="mono">PORTFOLIO_KEY</span>.</p>
     </div>
 
     <div class="card"><h2>Slack workspaces</h2>
@@ -1332,12 +1334,12 @@ function renderSettings(main) {
       ? '<span class="badge approved">\u2713 Connected</span> BambooHR is set up. Sync <strong>people</strong> first (People section), then <strong>time-off</strong> (Time-Off Entries).'
       : '<span class="badge pending">Not connected</span> Add the BambooHR settings on the server to enable syncing.';
   }).catch(() => {});
-  api('/jira/status').then(s => {
-    const el = $('#jiraStatus');
+  api('/portfolio/status').then(s => {
+    const el = $('#portfolioStatus');
     if (el) el.innerHTML = s.configured
-      ? '<span class="badge approved">✓ Connected</span> Jira is set up — the Sync button in Projects is ready to use.'
-      : '<span class="badge pending">Not connected</span> Add the Jira environment variables on the server to enable syncing.';
-  }).catch(() => { const el = $('#jiraStatus'); if (el) el.textContent = 'Could not check Jira status.'; });
+      ? '<span class="badge approved">✓ Connected</span> The project source is set up — use <strong>Sync projects</strong> in the Projects section.'
+      : '<span class="badge pending">Not connected</span> Add PORTFOLIO_URL and PORTFOLIO_KEY on the server to enable syncing.';
+  }).catch(() => { const el = $('#portfolioStatus'); if (el) el.textContent = 'Could not check the project source.'; });
   $('#addWs').onclick = () => wsForm({});
   main.querySelectorAll('[data-wedit]').forEach(b => b.onclick = () => wsForm(S.workspaces.find(w => w.id === +b.dataset.wedit)));
   main.querySelectorAll('[data-wdel]').forEach(b => b.onclick = async () => { await api('/workspaces/' + b.dataset.wdel, 'DELETE'); await reload('Deleted'); });
