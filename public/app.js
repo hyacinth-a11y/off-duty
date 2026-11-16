@@ -831,13 +831,37 @@ function renderHolidays(main) {
 function renderTimeoff(main) {
   const sortMode = S._toSort || 'date';
   const groupMode = S._toGroup || 'none';
-  const F = S._toFilter || { location: '', department: '', division: '', view: '' };
+  // Default to the current month — the full history gets unwieldy once
+  // BambooHR is feeding entries in.
+  const monthBounds = () => {
+    const tz = (S.settings && S.settings.timezone) || 'Asia/Manila';
+    const p = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+    const [y, m] = p.split('-').map(Number);
+    const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+    return { from: `${y}-${String(m).padStart(2, '0')}-01`, to: `${y}-${String(m).padStart(2, '0')}-${last}` };
+  };
+  const F = S._toFilter || { location: '', department: '', division: '', view: '', range: 'month', from: '', to: '' };
   S._toFilter = F;
+
+  // Work out the active date window. An entry counts if it OVERLAPS the window,
+  // so leave spanning a month boundary shows up in both months.
+  let win = null;
+  if (F.range === 'month') win = monthBounds();
+  else if (F.range === 'next') {
+    const b = monthBounds();
+    const [y, m] = b.from.split('-').map(Number);
+    const ny = m === 12 ? y + 1 : y, nm = m === 12 ? 1 : m + 1;
+    const last = new Date(Date.UTC(ny, nm, 0)).getUTCDate();
+    win = { from: `${ny}-${String(nm).padStart(2, '0')}-01`, to: `${ny}-${String(nm).padStart(2, '0')}-${last}` };
+  } else if (F.range === 'custom' && (F.from || F.to)) {
+    win = { from: F.from || '0000-01-01', to: F.to || '9999-12-31' };
+  }
 
   // The same People filters, applied to whoever an entry belongs to.
   const memberById = id => S.members.find(m => m.id === id) || {};
   const activeView = (S.views || []).find(v => String(v.id) === String(F.view));
   const passesFilters = t => {
+    if (win && (t.end_date < win.from || t.start_date > win.to)) return false; // overlap test
     const m = memberById(t.member_id);
     if (activeView && !(activeView.member_ids || []).includes(t.member_id)) return false;
     if (F.location && m.location !== F.location) return false;
@@ -922,14 +946,25 @@ function renderTimeoff(main) {
           <select id="tfView" style="width:auto"><option value="">Everyone</option>
             ${(S.views || []).map(v => `<option value="${v.id}" ${String(F.view) === String(v.id) ? 'selected' : ''}>${esc(v.name)}</option>`).join('')}
           </select></label>
+        <label class="small muted" style="display:flex;align-items:center;gap:6px">Dates
+          <select id="tfRange" style="width:auto">
+            <option value="month" ${F.range === 'month' ? 'selected' : ''}>This month</option>
+            <option value="next" ${F.range === 'next' ? 'selected' : ''}>Next month</option>
+            <option value="custom" ${F.range === 'custom' ? 'selected' : ''}>Custom range…</option>
+            <option value="all" ${F.range === 'all' ? 'selected' : ''}>All dates</option>
+          </select></label>
+        ${F.range === 'custom' ? `<label class="small muted" style="display:flex;align-items:center;gap:6px">from
+            <input type="date" id="tfFrom" value="${esc(F.from)}" style="width:auto"></label>
+          <label class="small muted" style="display:flex;align-items:center;gap:6px">to
+            <input type="date" id="tfTo" value="${esc(F.to)}" style="width:auto"></label>` : ''}
         ${tfSel('tfLocation', 'Location', tfUniq('location'), F.location)}
         ${tfSel('tfDepartment', 'Department', tfUniq('department'), F.department)}
         ${tfSel('tfDivision', 'Employment status', tfDivisions(), F.division)}
-        ${F.location || F.department || F.division || F.view ? '<button class="btn-ghost" id="tfClear">Clear filters</button>' : ''}
+        ${F.location || F.department || F.division || F.view || F.range !== 'month' ? '<button class="btn-ghost" id="tfClear">Reset filters</button>' : ''}
       </div>
     </div>
     ${bodyHtml}
-    <p class="muted small">Heads-up: only entries marked <strong>Approved</strong> are included in Slack notifications. If someone isn't in the member dropdown, add them under Team Members first.</p>`;
+    <p class="muted small">${win ? `Showing entries overlapping <strong>${fmt(win.from)} → ${fmt(win.to)}</strong>.` : 'Showing <strong>all dates</strong>.'} Heads-up: only entries marked <strong>Approved</strong> are included in Slack notifications. If someone isn't in the member dropdown, add them under Team Members first.</p>`;
 
   const form = t => {
     t = t || { member_id: '', start_date: '', end_date: '', status: 'pending', project_ids: [], note: '' };
@@ -979,11 +1014,18 @@ function renderTimeoff(main) {
   $('#toSort').onchange = e => { S._toSort = e.target.value; renderTimeoff(main); };
   $('#toGroup').onchange = e => { S._toGroup = e.target.value; renderTimeoff(main); };
   const setTF = (k, v) => { F[k] = v; renderTimeoff(main); };
+  $('#tfRange').onchange = e => {
+    F.range = e.target.value;
+    if (F.range === 'custom' && !F.from && !F.to) { const b = monthBounds(); F.from = b.from; F.to = b.to; }
+    renderTimeoff(main);
+  };
+  if ($('#tfFrom')) $('#tfFrom').onchange = e => setTF('from', e.target.value);
+  if ($('#tfTo')) $('#tfTo').onchange = e => setTF('to', e.target.value);
   $('#tfView').onchange = e => setTF('view', e.target.value);
   $('#tfLocation').onchange = e => setTF('location', e.target.value);
   $('#tfDepartment').onchange = e => setTF('department', e.target.value);
   $('#tfDivision').onchange = e => setTF('division', e.target.value);
-  if ($('#tfClear')) $('#tfClear').onclick = () => { S._toFilter = { location: '', department: '', division: '', view: '' }; renderTimeoff(main); };
+  if ($('#tfClear')) $('#tfClear').onclick = () => { S._toFilter = { location: '', department: '', division: '', view: '', range: 'month', from: '', to: '' }; renderTimeoff(main); };
   $('#bambooSync').onclick = async () => {
     const btn = $('#bambooSync'); if (btn.disabled) return;
     btn.disabled = true; btn.textContent = 'Checking BambooHR…';
