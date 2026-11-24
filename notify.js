@@ -174,8 +174,10 @@ function renderTemplate(template, report) {
 
   // ---- holiday block ----
   if (holidayGroups.length) {
+    // One line per holiday, with the people observing it as indented bullets —
+    // the same shape the time-off list uses for a member's several dates.
     const holidayList = holidayGroups.map(g =>
-      `• ${fmtDate(g.date)} — ${g.name} (${g.location}): ${g.members.map(m => m.name).join(', ')}`
+      `• ${fmtDate(g.date)} — ${g.name} (${g.location}):\n${g.members.map(m => `        ◦ ${m.name}`).join('\n')}`
     ).join('\n');
     const holidayDates = fmtRange(holidayGroups[0].date, holidayGroups[holidayGroups.length - 1].date);
     out = out.replaceAll('{holiday_list}', holidayList).replaceAll('{holiday_dates}', holidayDates);
