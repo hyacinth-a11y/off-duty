@@ -110,6 +110,7 @@ function closeModal() { $('#modal').close(); }
 $('#modal').addEventListener('click', e => { if (e.target === $('#modal')) closeModal(); });
 
 const memberName = id => (S.members.find(m => m.id === id) || {}).name || '(removed)';
+const isArchivedProject = id => !!(S.projects.find(p => p.id === id) || {}).archived;
 const projectName = id => (S.projects.find(p => p.id === id) || {}).name || '(removed)';
 // ---------------- CSV export ----------------
 // Quote anything containing a comma, quote or newline; double up inner quotes.
@@ -893,7 +894,7 @@ function renderTimeoff(main) {
   };
 
   const rows = S.timeoffs
-    .filter(t => hit(memberName(t.member_id), t.project_ids.map(projectName).join(' ')))
+    .filter(t => hit(memberName(t.member_id), t.project_ids.filter(id => !isArchivedProject(id)).map(projectName).join(' ')))
     .filter(passesFilters)
     .sort(sortMode === 'name'
     ? (a, b) => memberName(a.member_id).localeCompare(memberName(b.member_id), undefined, { sensitivity: 'base' }) || a.start_date.localeCompare(b.start_date)
@@ -903,7 +904,7 @@ function renderTimeoff(main) {
   const rowHtml = (t, skip) => `<tr>
     ${skip === 'member' ? '' : `<td><strong>${esc(memberName(t.member_id))}</strong></td>`}
     <td class="nowrap">${fmtRange(t.start_date, t.end_date)}</td>
-    ${skip === 'project' ? '' : `<td>${t.project_ids.map(id => `<span class="chip">${esc(projectName(id))}</span>`).join(' ') || '<span class="muted small">—</span>'}</td>`}
+    ${skip === 'project' ? '' : `<td>${t.project_ids.filter(id => !isArchivedProject(id)).map(id => `<span class="chip">${esc(projectName(id))}</span>`).join(' ') || '<span class="muted small">—</span>'}</td>`}
     <td><span class="badge ${t.status}">${t.status === 'approved' ? 'Approved' : 'Pending approval'}</span></td>
     <td class="small muted">${esc(t.note) || ''}</td>
     <td class="nowrap"><button class="btn-link" data-edit="${t.id}">Edit</button><button class="btn-danger" data-del="${t.id}">Delete</button></td>
@@ -921,9 +922,10 @@ function renderTimeoff(main) {
   } else {
     const map = new Map();
     for (const t of rows) {
+      const live = t.project_ids.filter(id => !isArchivedProject(id)); // archived projects drop out
       const keys = groupMode === 'member'
         ? [t.member_id]
-        : (t.project_ids.length ? t.project_ids : [null]); // an entry shows under each of its projects
+        : (live.length ? live : [null]); // an entry shows under each of its projects
       for (const k of keys) {
         if (!map.has(k)) map.set(k, []);
         map.get(k).push(t);
@@ -1097,7 +1099,7 @@ function renderTimeoff(main) {
               const m = S.members.find(x => x.id === t.member_id) || {};
               return [m.name || '(removed)', m.division || m.status || '', m.location || '', m.department || '',
                 t.start_date, t.end_date, daysBetween(t.start_date, t.end_date), t.status,
-                (t.project_ids || []).map(projectName).join('; '), t.note || ''];
+                (t.project_ids || []).filter(id => !isArchivedProject(id)).map(projectName).join('; '), t.note || ''];
             });
           downloadCsv(`off-duty-timeoff-${suffix}.csv`, headers, data);
 
@@ -1106,7 +1108,8 @@ function renderTimeoff(main) {
           const byProject = new Map();
           for (const t of list) {
             const who = memberName(t.member_id);
-            const ids = (t.project_ids || []).length ? t.project_ids : [null];
+            const liveIds = (t.project_ids || []).filter(id => !isArchivedProject(id));
+            const ids = liveIds.length ? liveIds : [null];
             for (const id of ids) {
               if (!byProject.has(id)) byProject.set(id, []);
               byProject.get(id).push(`${who} (${t.start_date} to ${t.end_date})`);
@@ -1177,6 +1180,7 @@ async function renderProjectView(main) {
       <h1>Send Notif</h1>
       <p>Covers ${fmt(S.win.start)} → ${fmt(S.win.end)}. Only projects with approved time-off or members observing a holiday appear.</p>
       <span class="spacer"></span>
+      <button class="btn-ghost" id="snExport" title="Export to a spreadsheet">⬇ Export</button>
       <button class="btn-ghost" id="pvRefresh" title="Reload latest send timestamps">↻ Refresh</button>
     </div><div id="pvBody"><div class="empty">Loading…</div></div>`;
   $('#pvRefresh').onclick = () => reload('Refreshed');
@@ -1215,11 +1219,11 @@ async function renderProjectView(main) {
       const sentText = (m.channel.last_sent_text || '');
       const currentText = (m.text || '').replaceAll('@here', '<!here>').replaceAll('@channel', '<!channel>');
       const attention = !!m.channel.last_sent_at && sentText !== currentText; // sent before, but info changed since
-      items.push({ kind: m.channel.purpose, wsId: m.channel.workspace_id || null, people, p, m, attention });
+      items.push({ kind: m.channel.purpose, wsId: m.channel.workspace_id || null, people, rep, p, m, attention });
     }
     if (prev.emailFallback) {
       const inferred = (p.channels.find(c => c.workspace_id) || {}).workspace_id || null;
-      items.push({ kind: 'email', wsId: inferred, people, p, text: prev.emailFallback });
+      items.push({ kind: 'email', wsId: inferred, people, rep, p, text: prev.emailFallback });
     }
   });
   if (!items.length) { body.innerHTML = `<div class="card"><div class="empty">${noMatch('Nobody is out and no holidays fall in this period — nothing to send. 🎉')}</div></div>`; return; }
@@ -1279,6 +1283,86 @@ async function renderProjectView(main) {
     ${group('Internal', 'internal', 'nothing to send')}
     ${group('External', 'external', 'nothing to send')}
     ${group('Emails', 'email', 'no email-only projects')}`;
+
+  $('#snExport').onclick = () => {
+    const shown = inWs;                 // exactly what the filters are showing
+    const bits = [
+      NF.workspace ? `workspace ${NF.workspace === 'none' ? '(none)' : wsName(+NF.workspace)}` : null,
+      NF.kind ? `type ${NF.kind}` : null,
+      NF.member ? `person ${memberName(+NF.member)}` : null,
+      NF.project ? `project ${projectName(+NF.project)}` : null,
+      snView ? `view "${snView.name}"` : null,
+    ].filter(Boolean);
+
+    openModal(`
+      <h2>Export notices</h2>
+      <p class="muted small">Covers the current notice window: <strong>${fmt(S.win.start)} → ${fmt(S.win.end)}</strong>.</p>
+      <div class="email-meta">
+        <div class="em-row"><span class="em-label">Filters</span><span class="em-value">${bits.length ? esc(bits.join(' · ')) : 'none — showing everything'}</span></div>
+        <div class="em-row"><span class="em-label">Rows</span><span class="em-value"><strong>${shown.length}</strong> channel(s)/email(s)</span></div>
+      </div>
+      <label class="field" style="margin-top:12px"><span>What to export</span>
+        <label style="display:flex;gap:8px;align-items:center;font-weight:400;color:var(--ink);padding:3px 0">
+          <input type="radio" name="snWhat" value="who" checked style="width:auto"> Who's out — one row per person or holiday, per project</label>
+        <label style="display:flex;gap:8px;align-items:center;font-weight:400;color:var(--ink);padding:3px 0">
+          <input type="radio" name="snWhat" value="channels" style="width:auto"> Channels — one row per channel, with the full notice text</label>
+      </label>
+      <div class="modal-actions"><button class="btn-ghost" id="mCancel">Cancel</button><button class="btn-primary" id="snGo">Download CSV</button></div>
+    `, body => {
+      $('#mCancel', body).onclick = closeModal;
+      $('#snGo', body).onclick = () => {
+        const what = body.querySelector('input[name=snWhat]:checked').value;
+
+        if (what === 'channels') {
+          const headers = ['Project', 'Project status', 'Manager', 'Channel', 'Type', 'Workspace', 'Needs attention', 'Last sent', 'Sent via', 'People out', 'Holidays', 'Notice text'];
+          const rows = shown.map(it => {
+            const ch = it.m ? it.m.channel : null;
+            const oooCount = it.rep ? it.rep.ooo.length : '';
+            const holCount = it.rep ? it.rep.holidayGroups.length : '';
+            return [
+              it.p.name, it.p.status || '', it.p.manager || '',
+              ch ? '#' + ch.name : '(email)', it.kind,
+              ch ? wsName(ch.workspace_id) : '',
+              it.attention ? 'yes' : '',
+              ch && ch.last_sent_at ? fmtDT(ch.last_sent_at) : 'never',
+              ch && ch.last_sent_via ? ch.last_sent_via : '',
+              oooCount, holCount,
+              it.m ? it.m.text : (it.text || ''),
+            ];
+          });
+          downloadCsv(`off-duty-notices-${stamp()}.csv`, headers, rows);
+
+        } else {
+          // flatten to one row per person (or per holiday observer), per project
+          const headers = ['Project', 'Project status', 'Channel', 'Type', 'Workspace', 'Kind', 'Person', 'Employment status', 'Location', 'Start date', 'End date', 'Days', 'Holiday'];
+          const rows = [];
+          for (const it of shown) {
+            const ch = it.m ? it.m.channel : null;
+            const chName = ch ? '#' + ch.name : '(email)';
+            const ws = ch ? wsName(ch.workspace_id) : '';
+            if (!it.rep) continue;
+            for (const t of it.rep.ooo) {
+              const m = S.members.find(x => x.id === t.member_id) || {};
+              rows.push([it.p.name, it.p.status || '', chName, it.kind, ws, 'Time off',
+                m.name || '(removed)', m.division || m.status || '', m.location || '',
+                t.start_date, t.end_date, daysBetween(t.start_date, t.end_date), '']);
+            }
+            for (const g of it.rep.holidayGroups) {
+              for (const m of (g.members || [])) {
+                const full = S.members.find(x => x.id === m.id) || {};
+                rows.push([it.p.name, it.p.status || '', chName, it.kind, ws, 'Holiday',
+                  m.name, full.division || full.status || '', full.location || '',
+                  g.date, g.date, 1, `${g.name} (${g.location})`]);
+              }
+            }
+          }
+          downloadCsv(`off-duty-whos-out-${stamp()}.csv`, headers, rows);
+        }
+        closeModal();
+        toast('Downloaded \u2014 open it in Excel or Google Sheets');
+      };
+    });
+  };
 
   const setNF = (k, v) => { NF[k] = v; renderProjectView(main); };
   $('#snView').onchange = e => setNF('view', e.target.value);
@@ -1559,7 +1643,7 @@ function outOn(iso) {
     if (iso < t.start_date || iso > t.end_date) continue;
     if (!calPasses(t.member_id)) continue;
     const name = memberName(t.member_id);
-    const projects = (t.project_ids || []).map(projectName);
+    const projects = (t.project_ids || []).filter(id => !isArchivedProject(id)).map(projectName);
     if (q && !(name.toLowerCase().includes(q) || projects.join(' ').toLowerCase().includes(q))) continue;
     people.push({ kind: 'off', id: t.member_id, name, projects, note: t.note || '' });
   }
