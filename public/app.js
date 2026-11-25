@@ -111,6 +111,28 @@ $('#modal').addEventListener('click', e => { if (e.target === $('#modal')) close
 
 const memberName = id => (S.members.find(m => m.id === id) || {}).name || '(removed)';
 const projectName = id => (S.projects.find(p => p.id === id) || {}).name || '(removed)';
+// ---------------- CSV export ----------------
+// Quote anything containing a comma, quote or newline; double up inner quotes.
+const csvCell = v => {
+  const s = v == null ? '' : String(v);
+  return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+};
+const toCsv = (headers, rows) =>
+  [headers.map(csvCell).join(','), ...rows.map(r => r.map(csvCell).join(','))].join('\r\n');
+
+function downloadCsv(filename, headers, rows) {
+  // the BOM makes Excel open UTF-8 names (accents etc.) correctly
+  const blob = new Blob(['\uFEFF' + toCsv(headers, rows)], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+const daysBetween = (a, b) => Math.round((new Date(b + 'T00:00:00Z') - new Date(a + 'T00:00:00Z')) / 86400000) + 1;
+const stamp = () => new Date().toISOString().slice(0, 10);
+
 const tfUniq = key => [...new Set(S.members.map(m => m[key]).filter(Boolean))].sort();
 const tfDivisions = () => [...new Set(S.members.map(m => m.division || m.status).filter(Boolean))].sort();
 const tfSel = (id, label, opts, val) => `<label class="small muted" style="display:flex;align-items:center;gap:6px">${label}
@@ -937,6 +959,7 @@ function renderTimeoff(main) {
           <option value="date" ${sortMode === 'date' ? 'selected' : ''}>Time-off date (earliest first)</option>
           <option value="name" ${sortMode === 'name' ? 'selected' : ''}>Member name (A–Z)</option>
         </select></label>
+      <button class="btn-ghost" id="toExport" title="Export to a spreadsheet">⬇ Export</button>
       <button class="btn-ghost" id="bambooSync" title="Import approved leave for people already in the People section">↧ Sync time-off from BambooHR</button>
       <button class="btn-primary" id="addTo">Add time-off entry</button>
     </div>
@@ -1026,6 +1049,97 @@ function renderTimeoff(main) {
   $('#tfDepartment').onchange = e => setTF('department', e.target.value);
   $('#tfDivision').onchange = e => setTF('division', e.target.value);
   if ($('#tfClear')) $('#tfClear').onclick = () => { S._toFilter = { location: '', department: '', division: '', view: '', range: 'month', from: '', to: '' }; renderTimeoff(main); };
+  $('#toExport').onclick = () => {
+    const filtered = rows;                       // whatever the current filters show
+    const all = S.timeoffs;
+    const windowLabel = win ? `${fmt(win.from)} → ${fmt(win.to)}` : 'all dates';
+    const activeBits = [
+      win ? `dates ${windowLabel}` : null,
+      activeView ? `view "${activeView.name}"` : null,
+      F.location ? `location ${F.location}` : null,
+      F.department ? `dept ${F.department}` : null,
+      F.division ? `status ${F.division}` : null,
+    ].filter(Boolean);
+
+    openModal(`
+      <h2>Export to spreadsheet</h2>
+      <p class="muted small">Downloads a CSV you can open in Excel or Google Sheets.</p>
+      <div class="email-meta">
+        <div class="em-row"><span class="em-label">Current filters</span>
+          <span class="em-value">${activeBits.length ? esc(activeBits.join(' · ')) : 'none — showing everything'}</span></div>
+        <div class="em-row"><span class="em-label">Entries</span>
+          <span class="em-value"><strong>${filtered.length}</strong> match these filters${all.length !== filtered.length ? ` <span class="muted">(of ${all.length} total)</span>` : ''}</span></div>
+      </div>
+      <label class="field" style="margin-top:12px"><span>What to export</span>
+        <label style="display:flex;gap:8px;align-items:center;font-weight:400;color:var(--ink);padding:3px 0">
+          <input type="radio" name="exWhat" value="timeoff" checked style="width:auto"> Time-off entries — one row per person per leave</label>
+        <label style="display:flex;gap:8px;align-items:center;font-weight:400;color:var(--ink);padding:3px 0">
+          <input type="radio" name="exWhat" value="projects" style="width:auto"> Projects affected — one row per project, with who's out</label>
+        <label style="display:flex;gap:8px;align-items:center;font-weight:400;color:var(--ink);padding:3px 0">
+          <input type="radio" name="exWhat" value="people" style="width:auto"> People — the person list with their details</label>
+      </label>
+      <label style="display:flex;gap:8px;align-items:center;font-weight:400;color:var(--ink);margin:4px 0 0">
+        <input type="checkbox" id="exIgnore" style="width:auto"> Ignore the filters and export everything</label>
+      <div class="modal-actions"><button class="btn-ghost" id="mCancel">Cancel</button><button class="btn-primary" id="exGo">Download CSV</button></div>
+    `, body => {
+      $('#mCancel', body).onclick = closeModal;
+      $('#exGo', body).onclick = () => {
+        const what = body.querySelector('input[name=exWhat]:checked').value;
+        const ignore = $('#exIgnore', body).checked;
+        const list = ignore ? all : filtered;
+        const suffix = ignore ? 'all' : stamp();
+
+        if (what === 'timeoff') {
+          const headers = ['Member', 'Employment status', 'Location', 'Department', 'Start date', 'End date', 'Days', 'Approval', 'Projects affected', 'Note'];
+          const data = [...list]
+            .sort((a, b) => a.start_date.localeCompare(b.start_date) || memberName(a.member_id).localeCompare(memberName(b.member_id)))
+            .map(t => {
+              const m = S.members.find(x => x.id === t.member_id) || {};
+              return [m.name || '(removed)', m.division || m.status || '', m.location || '', m.department || '',
+                t.start_date, t.end_date, daysBetween(t.start_date, t.end_date), t.status,
+                (t.project_ids || []).map(projectName).join('; '), t.note || ''];
+            });
+          downloadCsv(`off-duty-timeoff-${suffix}.csv`, headers, data);
+
+        } else if (what === 'projects') {
+          // one row per project, listing who is out and when
+          const byProject = new Map();
+          for (const t of list) {
+            const who = memberName(t.member_id);
+            const ids = (t.project_ids || []).length ? t.project_ids : [null];
+            for (const id of ids) {
+              if (!byProject.has(id)) byProject.set(id, []);
+              byProject.get(id).push(`${who} (${t.start_date} to ${t.end_date})`);
+            }
+          }
+          const headers = ['Project', 'Status', 'Manager', 'Slack channels', 'People out', 'Who and when'];
+          const data = [...byProject.entries()].map(([id, outs]) => {
+            const p = S.projects.find(x => x.id === id) || {};
+            return [id === null ? '(no project assigned)' : (p.name || '(removed)'), p.status || '', p.manager || '',
+              (p.channels || []).map(c => '#' + c.name).join('; '), outs.length, outs.join('; ')];
+          }).sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+          downloadCsv(`off-duty-projects-affected-${suffix}.csv`, headers, data);
+
+        } else {
+          const people = ignore ? S.members : S.members.filter(m => list.some(t => t.member_id === m.id));
+          const headers = ['Name', 'Job title', 'Employment status', 'Department', 'Location', 'Work email', 'Observes holidays', 'Projects'];
+          const data = [...people].sort(byName).map(m => {
+            const s = S.settings || {};
+            const hol = (m.location || m.division)
+              ? ((s.division_holidays || {})[m.division] === false ? 'None' : ((s.location_map || {})[m.location] || 'not mapped'))
+              : (m.status === 'PH Employee' ? 'PH' : m.status === 'US Employee' ? 'US' : 'None');
+            return [m.name, m.job_title || '', m.division || m.status || '', m.department || '', m.location || '',
+              m.work_email || '', hol,
+              S.projects.filter(p => !p.archived && (p.member_ids || []).includes(m.id)).map(p => p.name).join('; ')];
+          });
+          downloadCsv(`off-duty-people-${suffix}.csv`, headers, data);
+        }
+        closeModal();
+        toast('Downloaded \u2014 open it in Excel or Google Sheets');
+      };
+    });
+  };
+
   $('#bambooSync').onclick = async () => {
     const btn = $('#bambooSync'); if (btn.disabled) return;
     btn.disabled = true; btn.textContent = 'Checking BambooHR…';
